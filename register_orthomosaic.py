@@ -110,16 +110,18 @@ class OrthomosaicRegistration:
         self.intermediate_dir.mkdir(parents=True, exist_ok=True)
         
         # Default scales
-        self.scales = scales if scales is not None else [0.125, 0.25, 0.5, 1.0]
+        default_scales = [0.125, 0.25, 0.5, 1.0]
+        default_algorithms = ['shift', 'shift', 'homography', 'homography']
+        self.scales = scales if scales is not None else default_scales
         
         # Default transform types by scale
         if transform_types is None:
-            self.transform_types = {
-                0.125: 'shift',
-                0.25: 'shift',
-                0.5: 'homography',
-                1.0: 'homography'
-            }
+            # Build from default scales and algorithms
+            self.transform_types = {scale: algo for scale, algo in zip(default_scales, default_algorithms)}
+            # If custom scales provided, use default algorithm for new scales (shift)
+            for scale in self.scales:
+                if scale not in self.transform_types:
+                    self.transform_types[scale] = 'shift'
         else:
             self.transform_types = transform_types
         
@@ -1487,16 +1489,19 @@ def main():
     parser.add_argument('output', help='Output directory')
     parser.add_argument('--scales', nargs='+', type=float, default=[0.125, 0.25, 0.5, 1.0],
                        help='Resolution scales (default: 0.125 0.25 0.5 1.0)')
+    parser.add_argument('--algorithms', nargs='+', type=str, default=['shift', 'shift', 'homography', 'homography'],
+                       help='Transform algorithms for each scale (default: shift shift homography homography). Must match number of scales.')
     parser.add_argument('--matcher', choices=['lightglue', 'sift', 'orb', 'patch_ncc'],
                        default='lightglue', help='Matching method (default: lightglue)')
-    parser.add_argument('--transform', type=str, help='Transform type (shift, similarity, affine, homography, polynomial_2, polynomial_3, spline, rubber_sheeting)')
     
     args = parser.parse_args()
     
-    # Create transform types dict if custom transform specified
-    transform_types = None
-    if args.transform:
-        transform_types = {scale: args.transform for scale in args.scales}
+    # Validate that scales and algorithms have the same length
+    if len(args.scales) != len(args.algorithms):
+        parser.error(f'Number of scales ({len(args.scales)}) must match number of algorithms ({len(args.algorithms)})')
+    
+    # Create transform types dict from paired scales and algorithms
+    transform_types = {scale: algo for scale, algo in zip(args.scales, args.algorithms)}
     
     # Run registration
     registration = OrthomosaicRegistration(
