@@ -41,11 +41,25 @@ logging.basicConfig(
 )
 
 # Add file handler for verbose logging
-def setup_file_logging(output_dir: Path):
-    """Set up file logging to a verbose log file."""
-    log_file = output_dir / 'registration_verbose.log'
+def setup_file_logging(output_dir: Path, debug_level: str = 'none'):
+    """Set up file logging based on debug level.
+    
+    Args:
+        output_dir: Output directory
+        debug_level: 'none', 'intermediate', or 'high'
+            - 'none': registration.log with INFO level
+            - 'intermediate': registration.log with INFO level
+            - 'high': registration_verbose.log with DEBUG level
+    """
+    if debug_level == 'high':
+        log_file = output_dir / 'registration_verbose.log'
+        log_level = logging.DEBUG
+    else:
+        log_file = output_dir / 'registration.log'
+        log_level = logging.INFO
+    
     file_handler = logging.FileHandler(log_file, mode='w')
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(log_level)
     file_handler.setFormatter(logging.Formatter(log_format))
     logging.getLogger().addHandler(file_handler)
     return log_file
@@ -80,7 +94,8 @@ class OrthomosaicRegistration:
     def __init__(self, source_path: str, target_path: str, output_dir: str,
                  scales: Optional[List[float]] = None,
                  matcher: str = 'lightglue',
-                 transform_types: Optional[Dict[float, str]] = None):
+                 transform_types: Optional[Dict[float, str]] = None,
+                 debug_level: str = 'none'):
         """
         Initialize registration.
         
@@ -91,23 +106,46 @@ class OrthomosaicRegistration:
             scales: List of scales (default: [0.125, 0.25, 0.5, 1.0])
             matcher: Matching method ('lightglue', 'sift', 'orb', 'patch_ncc')
             transform_types: Dict mapping scale to transform type (default: shift for 0.125/0.25, homography for 0.5/1.0)
+            debug_level: Debug level ('none', 'intermediate', 'high')
+                - 'none': Only log file and final orthomosaic
+                - 'intermediate': 'none' + intermediate/ directory files
+                - 'high': 'intermediate' + matching_and_transformations/ directory files + verbose log
         """
         self.source_path = Path(source_path)
         self.target_path = Path(target_path)
         self.output_dir = Path(output_dir)
+        self.debug_level = debug_level
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Set up verbose file logging
-        self.log_file = setup_file_logging(self.output_dir)
-        logging.info(f"Verbose logging to: {self.log_file}")
+        # Set up file logging based on debug level
+        self.log_file = setup_file_logging(self.output_dir, debug_level)
+        if debug_level == 'high':
+            logging.info(f"Verbose logging to: {self.log_file}")
+        else:
+            logging.info(f"Logging to: {self.log_file}")
         
-        # Create subdirectories
-        self.preprocessing_dir = self.output_dir / 'preprocessing'
-        self.matching_dir = self.output_dir / 'matching_and_transformations'
-        self.intermediate_dir = self.output_dir / 'intermediate'
-        self.preprocessing_dir.mkdir(parents=True, exist_ok=True)
-        self.matching_dir.mkdir(parents=True, exist_ok=True)
-        self.intermediate_dir.mkdir(parents=True, exist_ok=True)
+        # Create subdirectories conditionally based on debug level
+        self.preprocessing_dir = None
+        self.matching_dir = None
+        self.intermediate_dir = None
+        self._temp_intermediate_dir = None
+        
+        # Always need intermediate_dir for processing, but use temp location at 'none' level
+        if debug_level in ['intermediate', 'high']:
+            self.intermediate_dir = self.output_dir / 'intermediate'
+            self.intermediate_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # At 'none' level, use temp directory (will be cleaned up)
+            import tempfile
+            self._temp_intermediate_dir = Path(tempfile.mkdtemp(prefix='ortho_reg_'))
+            self.intermediate_dir = self._temp_intermediate_dir
+        
+        # Only 'high' level creates matching_and_transformations/ directory
+        if debug_level == 'high':
+            self.preprocessing_dir = self.output_dir / 'preprocessing'
+            self.matching_dir = self.output_dir / 'matching_and_transformations'
+            self.preprocessing_dir.mkdir(parents=True, exist_ok=True)
+            self.matching_dir.mkdir(parents=True, exist_ok=True)
         
         # Default scales
         default_scales = [0.125, 0.25, 0.5, 1.0]
@@ -183,16 +221,23 @@ class OrthomosaicRegistration:
                 source_img, target_img, overlap_info
             )
             
-            # Save overlap images to preprocessing directory
-            source_overlap_path = self.preprocessing_dir / f'source_overlap_scale{scale:.3f}.png'
-            target_overlap_path = self.preprocessing_dir / f'target_overlap_scale{scale:.3f}.png'
+            # Always save overlap images (needed for matching), but use temp location if not 'high' level
+            if self.debug_level == 'high' and self.preprocessing_dir:
+                overlap_dir = self.preprocessing_dir
+            else:
+                # Use intermediate_dir (which exists as temp at 'none' level)
+                overlap_dir = self.intermediate_dir
+            
+            source_overlap_path = overlap_dir / f'source_overlap_scale{scale:.3f}.png'
+            target_overlap_path = overlap_dir / f'target_overlap_scale{scale:.3f}.png'
             
             if not source_overlap_path.exists():
                 cv2.imwrite(str(source_overlap_path), source_overlap)
             if not target_overlap_path.exists():
                 cv2.imwrite(str(target_overlap_path), target_overlap)
             
-            logging.info(f"  Saved overlap images for scale {scale:.3f}")
+            if self.debug_level == 'high':
+                logging.info(f"  Saved overlap images for scale {scale:.3f}")
     
     def register(self) -> Optional[Path]:
         """
@@ -280,47 +325,73 @@ class OrthomosaicRegistration:
             if not matches_result or 'matches' not in matches_result or len(matches_result['matches']) == 0:
                 logging.error(f"No matches found at scale {scale:.3f}")
                 return None, None
-            matches_json = self.matching_dir / f'matches_scale{scale:.3f}.json'
-            self._save_matches_json(matches_result, matches_json, scale,
+            # Extract match points for transformation computation
+            # Always save matches JSON temporarily (needed for load_matches), but only keep if high debug
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir())
+            temp_matches_json = temp_dir / f'matches_scale{scale:.3f}_temp_{int(time.time())}.json'
+            self._save_matches_json(matches_result, temp_matches_json, scale,
                                    source_image=str(source_img_path),
                                    target_image=str(target_img_path))
-            matches_viz_path = self.matching_dir / f'matches_scale{scale:.3f}.png'
-            matches_result['scale'] = scale
-            visualize_matches(
-                source_img, target_img, matches_result, matches_viz_path,
-                source_name=source_img_path.name, target_name=target_img_path.name,
-                skip_json=True  # We write JSON separately with summary statistics
-            )
-            src_pts, dst_pts = load_matches(matches_json)
+            src_pts, dst_pts = load_matches(temp_matches_json)
+            
+            # Save matches files only at 'high' debug level
+            if self.debug_level == 'high' and self.matching_dir:
+                matches_json = self.matching_dir / f'matches_scale{scale:.3f}.json'
+                import shutil
+                shutil.copy(temp_matches_json, matches_json)
+                matches_viz_path = self.matching_dir / f'matches_scale{scale:.3f}.png'
+                matches_result['scale'] = scale
+                visualize_matches(
+                    source_img, target_img, matches_result, matches_viz_path,
+                    source_name=source_img_path.name, target_name=target_img_path.name,
+                    skip_json=True  # We write JSON separately with summary statistics
+                )
+            else:
+                matches_json = temp_matches_json  # Use temp for histogram if needed
+            
             src_pts_clean, dst_pts_clean, _ = remove_gross_outliers(src_pts, dst_pts)
             transform_result = self._compute_transformation(src_pts_clean, dst_pts_clean, transform_type, scale)
-            transform_json = self.matching_dir / transform_json_name
-            self._save_transform_json(transform_result, transform_json, scale)
-            inlier_mask_for_hist = transform_result.get('inliers')
-            if inlier_mask_for_hist is not None:
-                inlier_mask_for_hist = np.array(inlier_mask_for_hist, dtype=bool)
-                if len(inlier_mask_for_hist) != len(src_pts_clean):
-                    inlier_mask_for_hist = None
-            if inlier_mask_for_hist is None:
-                inlier_mask_for_hist = np.ones(len(src_pts_clean), dtype=bool)
-            self._create_error_histogram(
-                transform_result, scale,
-                src_pts=src_pts_clean, dst_pts=dst_pts_clean,
-                inlier_mask=inlier_mask_for_hist,
-                json_name=transform_json.name,
-                matches_path=matches_json
-            )
+            
+            # Save transform JSON and histogram only at 'high' debug level
+            if self.debug_level == 'high' and self.matching_dir:
+                transform_json = self.matching_dir / transform_json_name
+                self._save_transform_json(transform_result, transform_json, scale)
+                inlier_mask_for_hist = transform_result.get('inliers')
+                if inlier_mask_for_hist is not None:
+                    inlier_mask_for_hist = np.array(inlier_mask_for_hist, dtype=bool)
+                    if len(inlier_mask_for_hist) != len(src_pts_clean):
+                        inlier_mask_for_hist = None
+                if inlier_mask_for_hist is None:
+                    inlier_mask_for_hist = np.ones(len(src_pts_clean), dtype=bool)
+                self._create_error_histogram(
+                    transform_result, scale,
+                    src_pts=src_pts_clean, dst_pts=dst_pts_clean,
+                    inlier_mask=inlier_mask_for_hist,
+                    json_name=transform_json.name,
+                    matches_path=matches_json
+                )
+            else:
+                transform_json = None
+            
+            # Clean up temp file if not using it
+            if temp_matches_json != matches_json and temp_matches_json.exists():
+                temp_matches_json.unlink()
             return transform_result, transform_json
         
         # Helper to apply transform and extract overlap png with given basename
         def apply_and_overlap(input_ortho: Path, transform_result: Dict,
                               source_scale: float, target_scale: float,
                               output_basename: str) -> Tuple[Optional[Path], Optional[Path]]:
+            # Always save transformed orthomosaic (needed for processing pipeline)
+            # At 'none' level, it goes to temp directory which gets cleaned up
             transformed_path = self._apply_transform_to_orthomosaic(
                 input_ortho, transform_result, source_scale, target_scale
             )
             if transformed_path is None:
                 return None, None
+            
+            # Save overlap PNG to intermediate_dir (always exists, either real or temp)
             overlap_png = self._extract_overlap_from_orthomosaic(
                 transformed_path, target_scale, self.intermediate_dir,
                 output_name=output_basename
@@ -330,8 +401,10 @@ class OrthomosaicRegistration:
         # a) scale 0.125 shift
         scale_a = 0.125
         t_type_a = 'shift'
-        source_overlap_a = self.preprocessing_dir / f'source_overlap_scale{scale_a:.3f}.png'
-        target_overlap_a = self.preprocessing_dir / f'target_overlap_scale{scale_a:.3f}.png'
+        # Use intermediate_dir for overlap images (works for all debug levels)
+        overlap_dir = self.preprocessing_dir if (self.debug_level == 'high' and self.preprocessing_dir) else self.intermediate_dir
+        source_overlap_a = overlap_dir / f'source_overlap_scale{scale_a:.3f}.png'
+        target_overlap_a = overlap_dir / f'target_overlap_scale{scale_a:.3f}.png'
         transform_a, _ = run_matching(
             source_overlap_a, target_overlap_a, scale_a, t_type_a,
             transform_json_name=f'transform_scale{scale_a:.3f}.json'
@@ -356,7 +429,7 @@ class OrthomosaicRegistration:
         
         # c) matches at 0.25 using shifted source -> shift0.250
         transform_b, _ = run_matching(
-            overlap_b_shift0125_png, target_overlap_a.parent / f'target_overlap_scale{scale_b:.3f}.png',
+            overlap_b_shift0125_png, overlap_dir / f'target_overlap_scale{scale_b:.3f}.png',
             scale_b, 'shift', transform_json_name=f'transform_scale{scale_b:.3f}.json'
         )
         if transform_b is None:
@@ -378,7 +451,7 @@ class OrthomosaicRegistration:
         
         # e) matches at 0.5 using shifted source -> homography
         transform_c, _ = run_matching(
-            overlap_c_shift0250_png, target_overlap_a.parent / f'target_overlap_scale{scale_c:.3f}.png',
+            overlap_c_shift0250_png, overlap_dir / f'target_overlap_scale{scale_c:.3f}.png',
             scale_c, 'homography', transform_json_name=f'transform_scale{scale_c:.3f}.json'
         )
         if transform_c is None:
@@ -400,7 +473,7 @@ class OrthomosaicRegistration:
         
         # g) matches at 1.0 using shifted source -> homography final
         transform_d, _ = run_matching(
-            overlap_d_shift0500_png, target_overlap_a.parent / f'target_overlap_scale{scale_d:.3f}.png',
+            overlap_d_shift0500_png, overlap_dir / f'target_overlap_scale{scale_d:.3f}.png',
             scale_d, 'homography', transform_json_name=f'transform_scale{scale_d:.3f}.json'
         )
         if transform_d is None:
@@ -415,9 +488,22 @@ class OrthomosaicRegistration:
             import shutil
             shutil.copy(ortho_d_shift1000, final_output)
             logging.info(f"Final output: {final_output}")
+            
+            # Clean up temp intermediate directory if used (at 'none' debug level)
+            if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
+                import shutil
+                shutil.rmtree(self._temp_intermediate_dir)
+                logging.debug(f"Cleaned up temporary directory: {self._temp_intermediate_dir}")
+            
             return final_output
         
         logging.error("Final output was not generated.")
+        
+        # Clean up temp directory even on failure
+        if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
+            import shutil
+            shutil.rmtree(self._temp_intermediate_dir)
+        
         return None
     
     def _compute_matches(self, source: np.ndarray, target: np.ndarray,
@@ -1358,8 +1444,11 @@ class OrthomosaicRegistration:
         axes[1].legend()
         
         plt.tight_layout()
-        output_path = self.matching_dir / f'error_histogram_scale{scale:.3f}.png'
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        # Only save histogram if matching_dir exists (high debug level)
+        if self.matching_dir:
+            output_path = self.matching_dir / f'error_histogram_scale{scale:.3f}.png'
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            logging.info(f"  Saved distance histograms to {output_path.name}")
         plt.close()
         
         # region agent log
@@ -1377,8 +1466,6 @@ class OrthomosaicRegistration:
             }
         )
         # endregion agent log
-
-        logging.info(f"  Saved distance histograms to {output_path.name}")
     
     def _extract_overlap_from_orthomosaic(self, ortho_path: Path, scale: float,
                                           preprocessing_dir: Path,
@@ -1515,6 +1602,8 @@ def main():
                        help='Transform algorithms for each scale (overrides config). Must match number of scales.')
     parser.add_argument('--matcher', choices=['lightglue', 'sift', 'orb', 'patch_ncc'],
                        help='Matching method (overrides config)')
+    parser.add_argument('--debug', choices=['none', 'intermediate', 'high'],
+                       default='none', help='Debug level: none (log + final only), intermediate (+ intermediate files), high (+ all debug files)')
     
     args = parser.parse_args()
     
@@ -1528,6 +1617,9 @@ def main():
     source_path = args.source or config_dict.get('source_path')
     target_path = args.target or config_dict.get('target_path')
     output_dir = args.output or config_dict.get('output_dir', 'outputs')
+    
+    # Get debug level from CLI or config (CLI takes precedence)
+    debug_level = args.debug if args.debug else config_dict.get('debug_level', 'none')
     
     # Validate required parameters
     if not source_path or not target_path:
@@ -1587,7 +1679,8 @@ def main():
         'hierarchical_scales': scales,
         'algorithms': algorithms,
         'method': matcher,
-        'transform_types': {str(k): v for k, v in transform_types.items()}
+        'transform_types': {str(k): v for k, v in transform_types.items()},
+        'debug_level': debug_level
     }
     # Add any additional config values that might be useful
     if 'ransac_threshold' in config_dict:
@@ -1604,7 +1697,8 @@ def main():
         source_path, target_path, output_dir,
         scales=scales,
         matcher=matcher,
-        transform_types=transform_types
+        transform_types=transform_types,
+        debug_level=debug_level
     )
     
     result = registration.register()
