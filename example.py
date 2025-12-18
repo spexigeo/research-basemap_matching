@@ -17,13 +17,15 @@ import sys
 from pathlib import Path
 import json
 
+from constants import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER
+
 
 def example_1_basic_cli():
     """
     Example 1: Basic command-line usage
     
     This is the simplest way to register an orthomosaic.
-    Uses default settings: scales [0.125, 0.25, 0.5, 1.0] with algorithms [shift, shift, homography, homography]
+    Uses default settings from constants module.
     """
     print("\n" + "=" * 80)
     print("EXAMPLE 1: Basic CLI Usage")
@@ -73,8 +75,8 @@ def example_2_custom_scales_and_algorithms():
         source,
         target,
         output,
-        "--scales", "0.125", "0.25", "0.5", "1.0",
-        "--algorithms", "shift", "shift", "affine", "homography",
+        "--scales", *[str(s) for s in DEFAULT_SCALES],
+        "--algorithms", "shift", "shift", "affine", "homography",  # Custom algorithms for this example
         "--debug", "intermediate"  # Save intermediate files too
     ]
     
@@ -104,9 +106,9 @@ def example_3_using_config_file():
         "source_path": "inputs/orthomosaic_no_gcps.tif",
         "target_path": "inputs/qualicum_beach_basemap_esri.tif",
         "output_dir": "outputs/example3_config",
-        "hierarchical_scales": [0.125, 0.25, 0.5, 1.0],
-        "algorithms": ["shift", "shift", "homography", "homography"],
-        "method": "lightglue",
+        "hierarchical_scales": DEFAULT_SCALES.copy(),
+        "algorithms": DEFAULT_ALGORITHMS.copy(),
+        "method": DEFAULT_MATCHER,
         "debug_level": "high"  # Save all debug files
     }
     
@@ -254,19 +256,14 @@ def example_6_programmatic_usage():
     target = "inputs/qualicum_beach_basemap_esri.tif"
     output = "outputs/example6_programmatic"
     
-    # Create registration instance
+    # Create registration instance (using defaults from constants)
     registration = OrthomosaicRegistration(
         source_path=source,
         target_path=target,
         output_dir=output,
-        scales=[0.125, 0.25, 0.5, 1.0],
-        matcher='lightglue',
-        transform_types={
-            0.125: 'shift',
-            0.25: 'shift',
-            0.5: 'homography',
-            1.0: 'homography'
-        },
+        scales=DEFAULT_SCALES.copy(),
+        matcher=DEFAULT_MATCHER,
+        transform_types={scale: algo for scale, algo in zip(DEFAULT_SCALES, DEFAULT_ALGORITHMS)},
         debug_level='intermediate'
     )
     

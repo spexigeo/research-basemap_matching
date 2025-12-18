@@ -20,6 +20,7 @@ import time
 import logging
 import argparse
 
+from constants import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER, DEFAULT_DEBUG_LEVEL, DEFAULT_OUTPUT_DIR
 from preprocessing import ImagePreprocessor
 from matching import match_lightglue, match_sift, match_orb, match_patch_ncc, create_mask, LIGHTGLUE_AVAILABLE, visualize_matches
 from transformations import (
@@ -147,15 +148,13 @@ class OrthomosaicRegistration:
             self.preprocessing_dir.mkdir(parents=True, exist_ok=True)
             self.matching_dir.mkdir(parents=True, exist_ok=True)
         
-        # Default scales
-        default_scales = [0.125, 0.25, 0.5, 1.0]
-        default_algorithms = ['shift', 'shift', 'homography', 'homography']
-        self.scales = scales if scales is not None else default_scales
+        # Use defaults from constants module
+        self.scales = scales if scales is not None else DEFAULT_SCALES.copy()
         
         # Default transform types by scale
         if transform_types is None:
             # Build from default scales and algorithms
-            self.transform_types = {scale: algo for scale, algo in zip(default_scales, default_algorithms)}
+            self.transform_types = {scale: algo for scale, algo in zip(DEFAULT_SCALES, DEFAULT_ALGORITHMS)}
             # If custom scales provided, use default algorithm for new scales (shift)
             for scale in self.scales:
                 if scale not in self.transform_types:
@@ -163,7 +162,7 @@ class OrthomosaicRegistration:
         else:
             self.transform_types = transform_types
         
-        self.matcher = matcher.lower()
+        self.matcher = matcher.lower() if matcher else DEFAULT_MATCHER
         
         # Initialize preprocessor (will lazy-load metadata when needed)
         self.preprocessor = ImagePreprocessor(source_path, target_path, self.output_dir)
@@ -1603,7 +1602,7 @@ def main():
     parser.add_argument('--matcher', choices=['lightglue', 'sift', 'orb', 'patch_ncc'],
                        help='Matching method (overrides config)')
     parser.add_argument('--debug', choices=['none', 'intermediate', 'high'],
-                       default='none', help='Debug level: none (log + final only), intermediate (+ intermediate files), high (+ all debug files)')
+                       default=DEFAULT_DEBUG_LEVEL, help='Debug level: none (log + final only), intermediate (+ intermediate files), high (+ all debug files)')
     parser.add_argument('--get-basemap', type=str, choices=['esri', 'esri_world_imagery', 'openstreetmap', 'google_satellite', 'google_hybrid'],
                        help='Download basemap from specified source (requires --basemap-area)')
     parser.add_argument('--basemap-area', type=str,
@@ -1624,10 +1623,10 @@ def main():
     # Map config fields to arguments (with CLI overrides taking precedence)
     source_path = args.source or config_dict.get('source_path')
     target_path = args.target or config_dict.get('target_path')
-    output_dir = args.output or config_dict.get('output_dir', 'outputs')
+    output_dir = args.output or config_dict.get('output_dir', DEFAULT_OUTPUT_DIR)
     
     # Get debug level from CLI or config (CLI takes precedence)
-    debug_level = args.debug if args.debug else config_dict.get('debug_level', 'none')
+    debug_level = args.debug if args.debug else config_dict.get('debug_level', DEFAULT_DEBUG_LEVEL)
     
     # Handle basemap download if requested
     downloaded_bbox = None
@@ -1710,18 +1709,22 @@ def main():
     elif 'hierarchical_scales' in config_dict:
         scales = config_dict['hierarchical_scales']
     else:
-        scales = [0.125, 0.25, 0.5, 1.0]  # Default
+        scales = DEFAULT_SCALES.copy()
     
     if args.algorithms:
         algorithms = args.algorithms
     elif 'algorithms' in config_dict:
         algorithms = config_dict['algorithms']
     else:
-        # Default: first two scales get 'shift', rest get 'homography'
-        algorithms = ['shift'] * min(2, len(scales)) + ['homography'] * max(0, len(scales) - 2)
-        # Ensure we have enough algorithms
-        while len(algorithms) < len(scales):
-            algorithms.append('homography')
+        # Use default algorithms, extending if needed
+        if len(scales) == len(DEFAULT_SCALES) and scales == DEFAULT_SCALES:
+            algorithms = DEFAULT_ALGORITHMS.copy()
+        else:
+            # Default: first two scales get 'shift', rest get 'homography'
+            algorithms = ['shift'] * min(2, len(scales)) + ['homography'] * max(0, len(scales) - 2)
+            # Ensure we have enough algorithms
+            while len(algorithms) < len(scales):
+                algorithms.append('homography')
     
     # Get matcher from config or CLI
     if args.matcher:
@@ -1735,9 +1738,9 @@ def main():
             'patch_ncc': 'patch_ncc'
         }
         config_method = config_dict['method'].lower()
-        matcher = method_map.get(config_method, 'lightglue')
+        matcher = method_map.get(config_method, DEFAULT_MATCHER)
     else:
-        matcher = 'lightglue'  # Default
+        matcher = DEFAULT_MATCHER
     
     # Validate that scales and algorithms have the same length
     if len(scales) != len(algorithms):

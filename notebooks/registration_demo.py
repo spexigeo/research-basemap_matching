@@ -42,6 +42,7 @@ def __(Path, sys):
 
 @app.cell
 def __(repo_root):
+    from constants import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER
     from basemap_downloader import (
         download_basemap, h3_cells_to_bbox, load_h3_cells_from_file,
         parse_bbox_string
@@ -54,7 +55,12 @@ def __(repo_root):
     from register_orthomosaic import OrthomosaicRegistration
     
     print("✓ Modules imported")
+    print(f"Default scales: {DEFAULT_SCALES}")
+    print(f"Default matcher: {DEFAULT_MATCHER}")
     return (
+        DEFAULT_ALGORITHMS,
+        DEFAULT_MATCHER,
+        DEFAULT_SCALES,
         ImagePreprocessor,
         LIGHTGLUE_AVAILABLE,
         OrthomosaicRegistration,
@@ -187,9 +193,9 @@ def __(Path, plt, rasterio, repo_root, show, source_path):
 
 
 @app.cell
-def __():
-    # Define scales for hierarchical registration
-    scales = [0.125, 0.25, 0.5, 1.0]
+def __(DEFAULT_SCALES):
+    # Define scales for hierarchical registration (using defaults from constants)
+    scales = DEFAULT_SCALES.copy()
     print(f"Processing scales: {scales}")
     return scales,
 
@@ -311,9 +317,9 @@ def __(OrthomosaicRegistration, downloaded_path, output_dir, scales, source_path
         source_path=str(source_path),
         target_path=downloaded_path,
         output_dir=str(output_dir),
-        scales=scales,
-        matcher='lightglue',
-        transform_types={0.125: 'shift', 0.25: 'shift', 0.5: 'homography', 1.0: 'homography'},
+        scales=scales,  # Uses DEFAULT_SCALES
+        matcher=DEFAULT_MATCHER,
+        transform_types={scale: algo for scale, algo in zip(DEFAULT_SCALES, DEFAULT_ALGORITHMS)},
         debug_level='high'
     )
     

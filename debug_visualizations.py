@@ -7,12 +7,13 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import cv2
 from matching import visualize_matches
+from constants import DEFAULT_SCALES
 
 output_dir = Path("outputs/test_registration")
 matching_dir = output_dir / "matching_and_transformations"
 preprocessing_dir = output_dir / "preprocessing"
 
-scales = [0.125, 0.25, 0.5, 1.0]
+scales = DEFAULT_SCALES.copy()
 
 # Regenerate keypoint visualizations
 print("Regenerating keypoint visualizations...")
@@ -159,6 +160,7 @@ for scale in scales:
     print(f"      Inliers: {len(inlier_errors_m)} points, median={median_inliers:.2f}m, mean={mean_inliers:.2f}m")
 
 print("\nDone!")
+
 
 
 
