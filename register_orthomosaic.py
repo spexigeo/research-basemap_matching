@@ -1481,33 +1481,129 @@ class OrthomosaicRegistration:
         return output_path
 
 
+def load_config(config_path: str) -> dict:
+    """Load configuration from JSON file."""
+    config_path_obj = Path(config_path)
+    if not config_path_obj.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path_obj, 'r') as f:
+        config = json.load(f)
+    
+    return config
+
+
+def save_config(config: dict, output_dir: Path):
+    """Save configuration to output directory for reproducibility."""
+    config_path = output_dir / 'run_config.json'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    logging.info(f"Configuration saved to: {config_path}")
+
+
 def main():
     """Command-line interface."""
     parser = argparse.ArgumentParser(description='Register orthomosaic to basemap')
-    parser.add_argument('source', help='Path to source orthomosaic')
-    parser.add_argument('target', help='Path to target basemap')
-    parser.add_argument('output', help='Output directory')
-    parser.add_argument('--scales', nargs='+', type=float, default=[0.125, 0.25, 0.5, 1.0],
-                       help='Resolution scales (default: 0.125 0.25 0.5 1.0)')
-    parser.add_argument('--algorithms', nargs='+', type=str, default=['shift', 'shift', 'homography', 'homography'],
-                       help='Transform algorithms for each scale (default: shift shift homography homography). Must match number of scales.')
+    parser.add_argument('source', nargs='?', help='Path to source orthomosaic (overrides config)')
+    parser.add_argument('target', nargs='?', help='Path to target basemap (overrides config)')
+    parser.add_argument('output', nargs='?', help='Output directory (overrides config)')
+    parser.add_argument('--config', type=str, help='Path to configuration JSON file')
+    parser.add_argument('--scales', nargs='+', type=float,
+                       help='Resolution scales (overrides config)')
+    parser.add_argument('--algorithms', nargs='+', type=str,
+                       help='Transform algorithms for each scale (overrides config). Must match number of scales.')
     parser.add_argument('--matcher', choices=['lightglue', 'sift', 'orb', 'patch_ncc'],
-                       default='lightglue', help='Matching method (default: lightglue)')
+                       help='Matching method (overrides config)')
     
     args = parser.parse_args()
     
+    # Load configuration from file if provided
+    config_dict = {}
+    if args.config:
+        config_dict = load_config(args.config)
+        logging.info(f"Loaded configuration from: {args.config}")
+    
+    # Map config fields to arguments (with CLI overrides taking precedence)
+    source_path = args.source or config_dict.get('source_path')
+    target_path = args.target or config_dict.get('target_path')
+    output_dir = args.output or config_dict.get('output_dir', 'outputs')
+    
+    # Validate required parameters
+    if not source_path or not target_path:
+        parser.error('source_path and target_path are required. Provide them via --config file or as positional arguments.')
+    
+    # Get scales and algorithms from config or CLI
+    if args.scales:
+        scales = args.scales
+    elif 'hierarchical_scales' in config_dict:
+        scales = config_dict['hierarchical_scales']
+    else:
+        scales = [0.125, 0.25, 0.5, 1.0]  # Default
+    
+    if args.algorithms:
+        algorithms = args.algorithms
+    elif 'algorithms' in config_dict:
+        algorithms = config_dict['algorithms']
+    else:
+        # Default: first two scales get 'shift', rest get 'homography'
+        algorithms = ['shift'] * min(2, len(scales)) + ['homography'] * max(0, len(scales) - 2)
+        # Ensure we have enough algorithms
+        while len(algorithms) < len(scales):
+            algorithms.append('homography')
+    
+    # Get matcher from config or CLI
+    if args.matcher:
+        matcher = args.matcher
+    elif 'method' in config_dict:
+        # Map old config 'method' to new 'matcher' choices
+        method_map = {
+            'lightglue': 'lightglue',
+            'sift': 'sift',
+            'orb': 'orb',
+            'patch_ncc': 'patch_ncc'
+        }
+        config_method = config_dict['method'].lower()
+        matcher = method_map.get(config_method, 'lightglue')
+    else:
+        matcher = 'lightglue'  # Default
+    
     # Validate that scales and algorithms have the same length
-    if len(args.scales) != len(args.algorithms):
-        parser.error(f'Number of scales ({len(args.scales)}) must match number of algorithms ({len(args.algorithms)})')
+    if len(scales) != len(algorithms):
+        parser.error(f'Number of scales ({len(scales)}) must match number of algorithms ({len(algorithms)})')
     
     # Create transform types dict from paired scales and algorithms
-    transform_types = {scale: algo for scale, algo in zip(args.scales, args.algorithms)}
+    transform_types = {scale: algo for scale, algo in zip(scales, algorithms)}
+    
+    # Create output directory early to save config
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Save effective configuration for reproducibility
+    effective_config = {
+        'source_path': str(source_path),
+        'target_path': str(target_path),
+        'output_dir': str(output_dir),
+        'hierarchical_scales': scales,
+        'algorithms': algorithms,
+        'method': matcher,
+        'transform_types': {str(k): v for k, v in transform_types.items()}
+    }
+    # Add any additional config values that might be useful
+    if 'ransac_threshold' in config_dict:
+        effective_config['ransac_threshold'] = config_dict['ransac_threshold']
+    if 'max_features' in config_dict:
+        effective_config['max_features'] = config_dict['max_features']
+    if 'patch_size' in config_dict:
+        effective_config['patch_size'] = config_dict['patch_size']
+    
+    save_config(effective_config, output_path)
     
     # Run registration
     registration = OrthomosaicRegistration(
-        args.source, args.target, args.output,
-        scales=args.scales,
-        matcher=args.matcher,
+        source_path, target_path, output_dir,
+        scales=scales,
+        matcher=matcher,
         transform_types=transform_types
     )
     
