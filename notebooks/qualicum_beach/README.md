@@ -9,7 +9,7 @@ Standard Jupyter notebook for local use or JupyterLab.
 
 **Usage:**
 ```bash
-cd notebooks
+cd notebooks/qualicum_beach
 jupyter notebook registration_demo.ipynb
 ```
 
@@ -45,7 +45,7 @@ Marimo notebook for reactive Python notebooks.
 pip install marimo
 
 # Run notebook
-cd notebooks
+cd notebooks/qualicum_beach
 marimo edit registration_demo.py
 ```
 
