@@ -27,36 +27,20 @@ try:
     import importlib.util
     kmz_parser_path = Path(__file__).parent.parent / 'research-qualicum_beach_gcp_analysis' / 'qualicum_beach_gcp_analysis' / 'kmz_parser.py'
     if kmz_parser_path.exists():
-        # Read the file and extract just the functions we need
-        # This avoids import errors from dependencies
-        import ast
-        import types
-        
-        with open(kmz_parser_path, 'r') as f:
-            code = f.read()
-        
-        # Compile and execute in a new namespace
-        namespace = {}
-        # Add minimal imports that the code needs
-        namespace['zipfile'] = __import__('zipfile')
-        namespace['ET'] = __import__('xml.etree.ElementTree')
-        namespace['re'] = __import__('re')
-        namespace['os'] = __import__('os')
-        namespace['Path'] = Path
-        namespace['List'] = List
-        namespace['Dict'] = Dict
-        namespace['Optional'] = Optional
-        namespace['Tuple'] = Tuple
-        
-        exec(compile(code, str(kmz_parser_path), 'exec'), namespace)
-        
-        parse_kmz_file = namespace.get('parse_kmz_file')
-        load_gcps_from_kmz = namespace.get('load_gcps_from_kmz')
-        
-        if parse_kmz_file and load_gcps_from_kmz:
-            KMZ_PARSER_AVAILABLE = True
-except Exception as e:
-    # If import fails, we'll handle it gracefully
+        spec = importlib.util.spec_from_file_location("kmz_parser_module", kmz_parser_path)
+        kmz_parser_module = importlib.util.module_from_spec(spec)
+        # Suppress import errors from dependencies by catching them
+        try:
+            spec.loader.exec_module(kmz_parser_module)
+            parse_kmz_file = getattr(kmz_parser_module, 'parse_kmz_file', None)
+            load_gcps_from_kmz = getattr(kmz_parser_module, 'load_gcps_from_kmz', None)
+            if parse_kmz_file and load_gcps_from_kmz:
+                KMZ_PARSER_AVAILABLE = True
+        except (ImportError, AttributeError, ModuleNotFoundError):
+            # Dependencies not available, but that's okay - we'll handle it
+            pass
+except Exception:
+    # If import fails for any reason, we'll handle it gracefully
     pass
 
 
