@@ -1,0 +1,30 @@
+{
+  "source_path": "/Users/mauriciohessflores/Documents/Code/MyCode/research-qualicum_beach_gcp_analysis/outputs/orthomosaics/orthomosaic_no_gcps_utm.tif",
+  "target_path": "/Users/mauriciohessflores/Documents/Code/MyCode/research-qualicum_beach_gcp_analysis/outputs/qualicum_beach_basemap_esri.tif",
+  "method": "patch_ncc",
+  "output_dir": "outputs/esri_registration",
+  "verbose": true,
+  "hierarchical_scales": [
+    0.01,
+    0.05,
+    0.1,
+    0.2
+  ],
+  "preprocess_method": "gradient",
+  "visualization": {
+    "create_match_visualizations": true,
+    "create_difference_maps": true,
+    "create_png_overviews": true
+  },
+  "output_format": {
+    "compression": "JPEG",
+    "jpeg_quality": 90,
+    "tiled": true,
+    "blocksize": 512
+  },
+  "ransac_threshold": 5.0,
+  "max_features": 5000,
+  "patch_size": 256,
+  "patch_grid_spacing": 128,
+  "ncc_threshold": 0.3
+}

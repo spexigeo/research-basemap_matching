@@ -1,0 +1,55 @@
+{
+  "_comment": "Optimized configuration for Apple M4 Pro with 48GB RAM",
+  "_optimization_notes": [
+    "Takes advantage of high memory capacity",
+    "Uses multi-core CPU efficiently",
+    "Balances speed and accuracy",
+    "Processes larger scales for better quality"
+  ],
+
+  "source_path": "/Users/mauriciohessflores/Documents/Code/MyCode/research-qualicum_beach_gcp_analysis/outputs/orthomosaics/orthomosaic_no_gcps_utm.tif",
+  "target_path": "/Users/mauriciohessflores/Documents/Code/MyCode/research-qualicum_beach_gcp_analysis/outputs/qualicum_beach_basemap_esri_utm.tif",
+
+  "method": "patch_ncc",
+  "_method_note": "patch_ncc is best for your use case (seasonal changes) and parallelizes well on M4",
+
+  "output_dir": "outputs/m4_optimized",
+  "verbose": true,
+
+  "hierarchical_scales": [0.15, 0.3, 0.5],
+  "_scales_note": "Larger scales since you have 48GB RAM - better quality without memory issues",
+
+  "preprocess_method": "gradient",
+  "_preprocess_note": "Gradient is fast and good for structural matching",
+
+  "visualization": {
+    "create_match_visualizations": true,
+    "create_difference_maps": true,
+    "create_png_overviews": true
+  },
+
+  "output_format": {
+    "compression": "JPEG",
+    "jpeg_quality": 90,
+    "tiled": true,
+    "blocksize": 1024,
+    "_blocksize_note": "Larger blocks (1024 vs 512) - faster with high memory"
+  },
+
+  "ransac_threshold": 5.0,
+
+  "max_features": 8000,
+  "_max_features_note": "More features (8000 vs 5000) - you have memory for it",
+
+  "patch_size": 384,
+  "_patch_size_note": "Larger patches (384 vs 256) - more robust matching",
+
+  "patch_grid_spacing": 192,
+  "_spacing_note": "Denser grid - more matches, better accuracy",
+
+  "ncc_threshold": 0.45,
+  "_ncc_threshold_note": "Slightly lower threshold for more initial matches",
+
+  "reproject_to_metric": true,
+  "_reproject_note": "Auto-reproject geographic coordinates to UTM for accurate registration"
+}

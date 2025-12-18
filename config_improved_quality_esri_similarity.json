@@ -1,0 +1,37 @@
+{
+  "source_path": "inputs/orthomosaic_no_gcps_utm10n.tif",
+  "target_path": "inputs/qualicum_beach_basemap_esri_utm10n.tif",
+  "method": "patch_ncc",
+  "hierarchical_scales": [
+    0.15,
+    0.3,
+    0.5
+  ],
+  "patch_size": 384,
+  "patch_grid_spacing": 192,
+  "ncc_threshold": 0.35,
+  "transform_type": "similarity",
+  "enable_refinement": true,
+  "refinement_iterations": 2,
+  "adaptive_search": true,
+  "min_search_margin": 50,
+  "max_search_margin": 200,
+  "ransac_threshold": 5.0,
+  "preprocess_method": "edges",
+  "output_dir": "outputs/improved_quality_esri_similarity",
+  "verbose": true,
+  "visualization": {
+    "create_match_visualizations": true,
+    "create_difference_maps": true,
+    "create_png_overviews": true
+  },
+  "output_format": {
+    "compression": "JPEG",
+    "jpeg_quality": 90,
+    "tiled": true,
+    "blocksize": 1024
+  },
+  "reproject_to_metric": true,
+  "max_features": 8000,
+  "description": "Best accuracy, slower processing"
+}

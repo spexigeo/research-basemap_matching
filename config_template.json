@@ -1,0 +1,61 @@
+{
+  "_comment": "Configuration template for orthomosaic registration",
+
+  "source_path": "/path/to/your/orthomosaic.tif",
+  "target_path": "/path/to/your/basemap.tif",
+
+  "method": "patch_ncc",
+  "_method_options": [
+    "phase_correlation - Fast, translation only",
+    "ecc - Robust to illumination, affine transform",
+    "sift - Scale-invariant features, handles rotation/scale",
+    "orb - Fast feature matching",
+    "patch_ncc - Best for seasonal changes (RECOMMENDED)",
+    "arosics - Specialized for remote sensing (requires separate install)"
+  ],
+
+  "output_dir": "outputs",
+  "verbose": true,
+
+  "hierarchical_scales": [0.1, 0.2],
+  "_hierarchical_scales_note": "Coarse-to-fine processing scales. Start small for speed, add finer scales for accuracy",
+
+  "preprocess_method": "gradient",
+  "_preprocess_options": [
+    "gradient - Structure-based, good for seasonal changes",
+    "histogram - Normalize intensity differences",
+    "edges - Edge detection, very robust to appearance",
+    "clahe - Contrast enhancement",
+    "none - No preprocessing"
+  ],
+
+  "visualization": {
+    "create_match_visualizations": true,
+    "create_difference_maps": true,
+    "create_png_overviews": true
+  },
+
+  "output_format": {
+    "compression": "JPEG",
+    "_compression_options": ["JPEG", "LZW", "DEFLATE"],
+    "jpeg_quality": 90,
+    "_jpeg_quality_note": "1-100, higher is better quality but larger file",
+    "tiled": true,
+    "blocksize": 512
+  },
+
+  "ransac_threshold": 5.0,
+  "_ransac_threshold_note": "Outlier rejection threshold in pixels at target resolution",
+
+  "max_features": 5000,
+  "_max_features_note": "Maximum SIFT/ORB features to detect",
+
+  "patch_size": 256,
+  "_patch_size_note": "Size of patches for patch_ncc method",
+
+  "patch_grid_spacing": 128,
+  "_patch_grid_spacing_note": "Spacing between patch centers",
+
+  "ncc_threshold": 0.5,
+  "_ncc_threshold_note": "Minimum normalized cross-correlation to accept match (0-1)"
+}
