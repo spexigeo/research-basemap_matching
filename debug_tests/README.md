@@ -8,7 +8,7 @@ This directory contains tools for testing and debugging the registration pipelin
 
 **Usage**:
 ```bash
-python tests/diagnose_images.py <source_orthomosaic> <target_basemap>
+python debug_tests/diagnose_images.py <source_orthomosaic> <target_basemap>
 ```
 
 **What it checks**:
@@ -32,7 +32,7 @@ python tests/diagnose_images.py <source_orthomosaic> <target_basemap>
 
 **Usage**:
 ```bash
-python tests/test_matching.py <source> <target> [scale] [max_patches]
+python debug_tests/test_matching.py <source> <target> [scale] [max_patches]
 ```
 
 **What it does**:
@@ -48,6 +48,6 @@ python tests/test_matching.py <source> <target> [scale] [max_patches]
 
 **Example**:
 ```bash
-python tests/test_matching.py inputs/qualicum_beach/orthomosaic.tif inputs/qualicum_beach/basemap.tif 0.15 100
+python debug_tests/test_matching.py inputs/qualicum_beach/orthomosaic.tif inputs/qualicum_beach/basemap.tif 0.15 100
 ```
 

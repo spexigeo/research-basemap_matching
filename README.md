@@ -221,7 +221,7 @@ research-basemap_matching/
 │       ├── registration_demo.ipynb
 │       ├── registration_demo_colab.ipynb
 │       └── registration_demo.py
-├── tests/                     # Testing and debugging utilities
+├── debug_tests/               # Testing and debugging utilities
 │   ├── test_matching.py
 │   └── diagnose_images.py
 ├── requirements.txt           # Python dependencies
@@ -323,7 +323,7 @@ See `notebooks/qualicum_beach/README.md` for detailed information about:
 
 ## Testing and Debugging
 
-See `tests/README.md` for information about:
+See `debug_tests/README.md` for information about:
 - `test_matching.py`: Unit tests for matching algorithms
 - `diagnose_images.py`: Image diagnostics and analysis
 

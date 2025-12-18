@@ -204,7 +204,7 @@ def main():
 
     print("\nNext steps:")
     print("  1. Verify reprojection with diagnostic:")
-    print(f"     python tests/diagnose_images.py {ortho_output} {esri_output}")
+    print(f"     python debug_tests/diagnose_images.py {ortho_output} {esri_output}")
     print("\n  2. Update your config to use these files:")
     print(f'     "source_path": "{ortho_output}"')
     print(f'     "target_path": "{esri_output}"')
