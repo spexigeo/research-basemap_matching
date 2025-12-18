@@ -15,8 +15,8 @@ jupyter notebook registration_demo.ipynb
 
 **Requirements:**
 - Jupyter installed: `pip install jupyter`
-- All dependencies from `requirements.txt`
-- Input files in `../inputs/`:
+- All dependencies from `../../requirements.txt` (in repository root)
+- Input files in `../../inputs/qualicum_beach/`:
   - `orthomosaic_no_gcps.tif`
   - `h3_cells.xml`
 
