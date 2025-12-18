@@ -1604,6 +1604,14 @@ def main():
                        help='Matching method (overrides config)')
     parser.add_argument('--debug', choices=['none', 'intermediate', 'high'],
                        default='none', help='Debug level: none (log + final only), intermediate (+ intermediate files), high (+ all debug files)')
+    parser.add_argument('--get-basemap', type=str, choices=['esri', 'esri_world_imagery', 'openstreetmap', 'google_satellite', 'google_hybrid'],
+                       help='Download basemap from specified source (requires --basemap-area)')
+    parser.add_argument('--basemap-area', type=str,
+                       help='Area for basemap download: bounding box as "min_lat,min_lon,max_lat,max_lon" or path to file with H3 cells (one per line)')
+    parser.add_argument('--basemap-zoom', type=int,
+                       help='Zoom level for basemap download (auto-calculated if not specified)')
+    parser.add_argument('--basemap-resolution', type=float,
+                       help='Target resolution in meters per pixel for basemap download (alternative to --basemap-zoom)')
     
     args = parser.parse_args()
     
@@ -1621,9 +1629,80 @@ def main():
     # Get debug level from CLI or config (CLI takes precedence)
     debug_level = args.debug if args.debug else config_dict.get('debug_level', 'none')
     
+    # Handle basemap download if requested
+    downloaded_bbox = None
+    if args.get_basemap:
+        if not args.basemap_area:
+            parser.error('--get-basemap requires --basemap-area to be specified')
+        
+        # Warn if target is also provided
+        if target_path:
+            logging.warning(f'Both --get-basemap and target basemap provided. Using downloaded basemap (ignoring target: {target_path})')
+        
+        from basemap_downloader import (
+            download_basemap, h3_cells_to_bbox, load_h3_cells_from_file,
+            parse_bbox_string
+        )
+        
+        # Determine bounding box
+        basemap_area_path = Path(args.basemap_area)
+        if basemap_area_path.exists() and basemap_area_path.is_file():
+            # Assume it's an H3 cells file
+            try:
+                h3_cells = load_h3_cells_from_file(basemap_area_path)
+                logging.info(f"Loaded {len(h3_cells)} H3 cells from {basemap_area_path}")
+                bbox = h3_cells_to_bbox(h3_cells)
+                downloaded_bbox = bbox
+            except ImportError:
+                # h3 not installed, try parsing as bbox string
+                try:
+                    bbox = parse_bbox_string(basemap_area_path.read_text().strip())
+                    downloaded_bbox = bbox
+                except Exception as e2:
+                    parser.error(f'Failed to parse --basemap-area. H3 package not installed. Install with: pip install h3. Or provide as bbox string: {e2}')
+            except Exception as e:
+                # If H3 loading fails, try parsing as bbox string
+                try:
+                    bbox = parse_bbox_string(basemap_area_path.read_text().strip())
+                    downloaded_bbox = bbox
+                except Exception as e2:
+                    parser.error(f'Failed to parse --basemap-area as H3 cells file or bbox: {e}, {e2}')
+        else:
+            # Try parsing as bbox string
+            try:
+                bbox = parse_bbox_string(args.basemap_area)
+                downloaded_bbox = bbox
+            except Exception as e:
+                parser.error(f'Failed to parse --basemap-area as bounding box: {e}. Provide as "min_lat,min_lon,max_lat,max_lon" or path to H3 cells file.')
+        
+        logging.info(f"Bounding box for basemap download: {bbox}")
+        
+        # Determine output path for downloaded basemap
+        output_dir_path = Path(output_dir)
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        basemap_source_name = args.get_basemap.replace('_', '_').lower()
+        downloaded_basemap_path = output_dir_path / f'downloaded_basemap_{basemap_source_name}.tif'
+        
+        # Download basemap
+        logging.info(f"Downloading basemap from {args.get_basemap}...")
+        try:
+            downloaded_basemap = download_basemap(
+                bbox=bbox,
+                output_path=str(downloaded_basemap_path),
+                source=args.get_basemap,
+                zoom=args.basemap_zoom,
+                target_resolution=args.basemap_resolution
+            )
+            logging.info(f"✓ Basemap downloaded to: {downloaded_basemap}")
+            target_path = downloaded_basemap
+        except Exception as e:
+            parser.error(f'Failed to download basemap: {e}')
+    
     # Validate required parameters
-    if not source_path or not target_path:
-        parser.error('source_path and target_path are required. Provide them via --config file or as positional arguments.')
+    if not source_path:
+        parser.error('source_path is required. Provide it via --config file, as positional argument, or use --get-basemap with --basemap-area.')
+    if not target_path:
+        parser.error('target_path is required. Provide it via --config file, as positional argument, or use --get-basemap with --basemap-area.')
     
     # Get scales and algorithms from config or CLI
     if args.scales:
@@ -1682,6 +1761,18 @@ def main():
         'transform_types': {str(k): v for k, v in transform_types.items()},
         'debug_level': debug_level
     }
+    
+    # Add basemap download info if basemap was downloaded
+    if args.get_basemap and downloaded_bbox:
+        effective_config['basemap_download'] = {
+            'source': args.get_basemap,
+            'basemap_area': args.basemap_area,
+            'bbox': list(downloaded_bbox),
+            'zoom': args.basemap_zoom,
+            'target_resolution': args.basemap_resolution,
+            'downloaded_path': str(target_path)
+        }
+    
     # Add any additional config values that might be useful
     if 'ransac_threshold' in config_dict:
         effective_config['ransac_threshold'] = config_dict['ransac_threshold']
