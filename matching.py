@@ -1586,13 +1586,5 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    # Update global tile settings if provided
-    if args.tile_size:
-        import test_matching
-        # Store in a way that match_lightglue can access
-        test_matching.DEFAULT_TILE_SIZE = args.tile_size
-        test_matching.DEFAULT_OVERLAP = args.overlap
-        test_matching.DEFAULT_EXPECTED_ERROR = args.expected_error
-    
     main(scale=args.scale, method=args.method)
 
