@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 import json
 
-from constants import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER
+from defaults import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER
 
 
 def example_1_basic_cli():

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import cv2
 from matching import visualize_matches
-from constants import DEFAULT_SCALES
+from defaults import DEFAULT_SCALES
 
 output_dir = Path("outputs/test_registration")
 matching_dir = output_dir / "matching_and_transformations"

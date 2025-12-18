@@ -1,7 +1,7 @@
 """
-Default constants for orthomosaic registration pipeline.
+Default values for orthomosaic registration pipeline.
 
-These constants define the default values used throughout the registration pipeline.
+These defaults define the default values used throughout the registration pipeline.
 They can be overridden by user input via command-line arguments, config files, or programmatic API.
 """
 

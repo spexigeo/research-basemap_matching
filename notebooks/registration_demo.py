@@ -42,7 +42,7 @@ def __(Path, sys):
 
 @app.cell
 def __(repo_root):
-    from constants import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER
+    from defaults import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER
     from basemap_downloader import (
         download_basemap, h3_cells_to_bbox, load_h3_cells_from_file,
         parse_bbox_string
@@ -194,7 +194,7 @@ def __(Path, plt, rasterio, repo_root, show, source_path):
 
 @app.cell
 def __(DEFAULT_SCALES):
-    # Define scales for hierarchical registration (using defaults from constants)
+    # Define scales for hierarchical registration (using defaults from defaults module)
     scales = DEFAULT_SCALES.copy()
     print(f"Processing scales: {scales}")
     return scales,

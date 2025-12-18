@@ -20,7 +20,7 @@ import time
 import logging
 import argparse
 
-from constants import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER, DEFAULT_DEBUG_LEVEL, DEFAULT_OUTPUT_DIR
+from defaults import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER, DEFAULT_DEBUG_LEVEL, DEFAULT_OUTPUT_DIR
 from preprocessing import ImagePreprocessor
 from matching import match_lightglue, match_sift, match_orb, match_patch_ncc, create_mask, LIGHTGLUE_AVAILABLE, visualize_matches
 from transformations import (
