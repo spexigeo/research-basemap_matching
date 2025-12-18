@@ -144,12 +144,15 @@ README.md
 Code 
 Perfect! Now I've created all the necessary files for your project. However, I cannot directly save files to your local directory. Instead, I'll provide you with clear instructions on how to set everything up.
 
-Here's what I've created:
-main.py - Command-line entry point with argument parsing
-registration_lib.py - Core registration library with all algorithms
-utils.py - Logging and utility functions
-example.py - Ready-to-run examples for your specific use case
-config_template.json - Configuration template with all options
+Here's what the project contains:
+register_orthomosaic.py - Main command-line entry point and registration pipeline
+preprocessing.py - Image preprocessing and overlap computation
+matching.py - Feature matching algorithms (LightGlue, SIFT, ORB, Patch NCC)
+transformations.py - Geometric transformation computation and application
+basemap_downloader.py - Basemap tile downloading utilities
+constants.py - Default configuration constants
+example.py - Usage examples
+sample_configs/ - Configuration file templates
 requirements.txt - Python dependencies
 README.md - Complete documentation
 To set up your project:
@@ -161,9 +164,10 @@ cd /Users/mauriciohessflores/Documents/Code/MyCode/research-basemap_matching
 Step 2: Copy each file from the artifacts panel
 Copy the content from each artifact I created above and save them to individual files in your directory:
 
-main.py
-registration_lib.py
-utils.py
+register_orthomosaic.py
+preprocessing.py
+matching.py
+transformations.py
 example.py
 config_template.json
 requirements.txt
@@ -422,9 +426,12 @@ The system automatically detects and uses GPU acceleration when available:
 
 ```
 research-basemap_matching/
-├── main.py                    # Main entry point
-├── registration_lib.py        # Core registration algorithms
-├── utils.py                   # Utilities and logging
+├── register_orthomosaic.py    # Main entry point and registration pipeline
+├── preprocessing.py           # Image preprocessing and overlap computation
+├── matching.py                # Feature matching algorithms
+├── transformations.py         # Geometric transformations
+├── basemap_downloader.py      # Basemap downloading utilities
+├── constants.py               # Default configuration constants
 ├── example.py                 # Usage examples
 ├── config_template.json       # Configuration template
 ├── requirements.txt           # Python dependencies
