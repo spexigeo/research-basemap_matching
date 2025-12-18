@@ -96,7 +96,7 @@ def __(ET, Path, repo_root):
         return list(set(h3_cells))
     
     # Load H3 cells
-    h3_xml_path = repo_root / "inputs" / "h3_cells.xml"
+    h3_xml_path = repo_root / "inputs" / "qualicum_beach" / "h3_cells.xml"
     h3_cells = parse_h3_cells_from_xml(h3_xml_path)
     print(f"Found {len(h3_cells)} unique H3 cells:")
     for i, cell in enumerate(h3_cells[:5]):
@@ -159,7 +159,7 @@ def __(Path, downloaded_path, plt, rasterio, repo_root, show):
 @app.cell
 def __(ImagePreprocessor, Path, downloaded_path, output_dir, repo_root):
     # Load source orthomosaic
-    source_path = repo_root / "inputs" / "orthomosaic_no_gcps.tif"
+    source_path = repo_root / "inputs" / "qualicum_beach" / "orthomosaic_no_gcps.tif"
     
     print(f"Source orthomosaic: {source_path}")
     print(f"  Exists: {source_path.exists()}")

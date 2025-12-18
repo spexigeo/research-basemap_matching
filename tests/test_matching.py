@@ -191,7 +191,7 @@ if __name__ == '__main__':
     if len(sys.argv) < 3:
         print("Usage: python test_matching.py <source> <target> [scale] [max_patches]")
         print("\nExample:")
-        print("  python test_matching.py inputs/orthomosaic_no_gcps.tif inputs/basemap.tif 0.15 100")
+        print("  python test_matching.py inputs/qualicum_beach/orthomosaic_no_gcps.tif inputs/qualicum_beach/basemap.tif 0.15 100")
         sys.exit(1)
 
     source_path = sys.argv[1]

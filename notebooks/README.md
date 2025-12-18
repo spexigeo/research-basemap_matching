@@ -26,8 +26,8 @@ Optimized for Google Colab with automatic dependency installation.
 **Usage:**
 1. Upload to Google Colab
 2. Upload required files:
-   - `inputs/orthomosaic_no_gcps.tif` → `/content/inputs/`
-   - `inputs/h3_cells.xml` → `/content/inputs/`
+   - `inputs/qualicum_beach/orthomosaic_no_gcps.tif` → `/content/inputs/qualicum_beach/`
+   - `inputs/qualicum_beach/h3_cells.xml` → `/content/inputs/qualicum_beach/`
    - All Python modules to `/content/` (or clone from GitHub)
 3. Run all cells in order
 

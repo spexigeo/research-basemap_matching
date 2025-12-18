@@ -48,6 +48,6 @@ python tests/test_matching.py <source> <target> [scale] [max_patches]
 
 **Example**:
 ```bash
-python tests/test_matching.py inputs/orthomosaic.tif inputs/basemap.tif 0.15 100
+python tests/test_matching.py inputs/qualicum_beach/orthomosaic.tif inputs/qualicum_beach/basemap.tif 0.15 100
 ```
 

@@ -33,8 +33,8 @@ def example_1_basic_cli():
     print("\nThis example shows the simplest way to register an orthomosaic.")
     print("It uses default settings and saves only the final registered orthomosaic.\n")
     
-    source = "inputs/orthomosaic_no_gcps.tif"
-    target = "inputs/qualicum_beach_basemap_esri.tif"
+    source = "inputs/qualicum_beach/orthomosaic_no_gcps.tif"
+    target = "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif"
     output = "outputs/example1_basic"
     
     cmd = [
@@ -65,8 +65,8 @@ def example_2_custom_scales_and_algorithms():
     print("\nThis example uses custom scales and algorithms.")
     print("You can specify different transform types for different scales.\n")
     
-    source = "inputs/orthomosaic_no_gcps.tif"
-    target = "inputs/qualicum_beach_basemap_esri.tif"
+    source = "inputs/qualicum_beach/orthomosaic_no_gcps.tif"
+    target = "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif"
     output = "outputs/example2_custom"
     
     cmd = [
@@ -103,8 +103,8 @@ def example_3_using_config_file():
     
     # Create a sample config file
     config = {
-        "source_path": "inputs/orthomosaic_no_gcps.tif",
-        "target_path": "inputs/qualicum_beach_basemap_esri.tif",
+        "source_path": "inputs/qualicum_beach/orthomosaic_no_gcps.tif",
+        "target_path": "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif",
         "output_dir": "outputs/example3_config",
         "hierarchical_scales": DEFAULT_SCALES.copy(),
         "algorithms": DEFAULT_ALGORITHMS.copy(),
@@ -151,8 +151,8 @@ def example_4_different_matchers():
     print("  - orb: Fast, good for similar images")
     print("  - patch_ncc: Robust to seasonal/illumination changes\n")
     
-    source = "inputs/orthomosaic_no_gcps.tif"
-    target = "inputs/qualicum_beach_basemap_esri.tif"
+    source = "inputs/qualicum_beach/orthomosaic_no_gcps.tif"
+    target = "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif"
     
     matchers = ['lightglue', 'sift', 'orb', 'patch_ncc']
     
@@ -198,8 +198,8 @@ def example_5_debug_levels():
     print("=" * 80)
     print("\nThis example demonstrates the different debug levels.\n")
     
-    source = "inputs/orthomosaic_no_gcps.tif"
-    target = "inputs/qualicum_beach_basemap_esri.tif"
+    source = "inputs/qualicum_beach/orthomosaic_no_gcps.tif"
+    target = "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif"
     
     debug_levels = [
         ("none", "Only log and final orthomosaic"),
@@ -252,8 +252,8 @@ def example_6_programmatic_usage():
     
     from register_orthomosaic import OrthomosaicRegistration
     
-    source = "inputs/orthomosaic_no_gcps.tif"
-    target = "inputs/qualicum_beach_basemap_esri.tif"
+    source = "inputs/qualicum_beach/orthomosaic_no_gcps.tif"
+    target = "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif"
     output = "outputs/example6_programmatic"
     
     # Create registration instance (using defaults from constants)
@@ -288,8 +288,8 @@ def example_7_quick_test():
     print("=" * 80)
     print("\nThis is a minimal example for quick testing.\n")
     
-    source = "inputs/orthomosaic_no_gcps.tif"
-    target = "inputs/qualicum_beach_basemap_esri.tif"
+    source = "inputs/qualicum_beach/orthomosaic_no_gcps.tif"
+    target = "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif"
     output = "outputs/example7_quick_test"
     
     cmd = [

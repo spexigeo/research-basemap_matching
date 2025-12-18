@@ -1,6 +1,6 @@
 {
-  "source_path": "inputs/orthomosaic_no_gcps_utm10n.tif",
-  "target_path": "inputs/qualicum_beach_basemap_esri_utm10n.tif",
+  "source_path": "inputs/qualicum_beach/orthomosaic_no_gcps_utm10n.tif",
+  "target_path": "inputs/qualicum_beach/qualicum_beach_basemap_esri_utm10n.tif",
   "method": "patch_ncc",
   "hierarchical_scales": [
     0.15,

@@ -422,7 +422,7 @@ if __name__ == '__main__':
     if len(sys.argv) < 4:
         print("Usage: python evaluate_gcps.py <source_orthomosaic> <gcp_csv> <output_dir> [run_timestamp]")
         print("\nExample:")
-        print("  python evaluate_gcps.py inputs/orthomosaic_no_gcps_utm10n.tif \\")
+        print("  python evaluate_gcps.py inputs/qualicum_beach/orthomosaic_no_gcps_utm10n.tif \\")
         print("                           ../research-qualicum_beach_gcp_analysis/outputs/gcps_metashape.csv \\")
         print("                           outputs/improved_quality_esri_similarity")
         sys.exit(1)
