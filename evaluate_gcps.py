@@ -21,37 +21,27 @@ from typing import List, Dict, Tuple
 import matplotlib.pyplot as plt
 
 
-def load_gcps(csv_path: str) -> List[Dict]:
-    """Load GCPs from CSV file (supports both comma and tab separated)."""
-    gcps = []
-    with open(csv_path, 'r') as f:
-        # Try to detect delimiter
-        first_line = f.readline()
-        f.seek(0)
+def load_gcps(gcp_path: str) -> List[Dict]:
+    """
+    Load GCPs from CSV or KMZ file.
+    
+    Args:
+        gcp_path: Path to CSV or KMZ file
         
-        if '\t' in first_line:
-            delimiter = '\t'
-        else:
-            delimiter = ','
-        
-        reader = csv.DictReader(f, delimiter=delimiter)
-        for row in reader:
-            # Handle case-insensitive column names
-            label_key = next((k for k in row.keys() if k.lower() == 'label'), 'Label')
-            x_key = next((k for k in row.keys() if k.lower() == 'x'), 'X')
-            y_key = next((k for k in row.keys() if k.lower() == 'y'), 'Y')
-            z_key = next((k for k in row.keys() if k.lower() == 'z'), 'Z')
-            enabled_key = next((k for k in row.keys() if k.lower() == 'enabled'), 'Enabled')
-            accuracy_key = next((k for k in row.keys() if k.lower() == 'accuracy'), 'Accuracy')
-            
-            if row.get(enabled_key, '1') == '1':  # Only enabled GCPs
-                gcps.append({
-                    'label': row[label_key],
-                    'lon': float(row[x_key]),
-                    'lat': float(row[y_key]),
-                    'z': float(row.get(z_key, '0.0')),
-                    'accuracy': float(row.get(accuracy_key, '0.005'))
-                })
+    Returns:
+        List of GCP dictionaries
+    """
+    from gcp_analysis import load_gcps_from_file
+    
+    gcps = load_gcps_from_file(gcp_path)
+    
+    # Ensure 'label' and 'accuracy' fields for backward compatibility
+    for gcp in gcps:
+        if 'label' not in gcp:
+            gcp['label'] = gcp.get('id', f"GCP_{gcps.index(gcp)+1:03d}")
+        if 'accuracy' not in gcp:
+            gcp['accuracy'] = 0.005  # Default accuracy
+    
     return gcps
 
 

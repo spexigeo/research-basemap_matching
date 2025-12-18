@@ -1611,6 +1611,8 @@ def main():
                        help='Zoom level for basemap download (auto-calculated if not specified)')
     parser.add_argument('--basemap-resolution', type=float,
                        help='Target resolution in meters per pixel for basemap download (alternative to --basemap-zoom)')
+    parser.add_argument('--gcp-analysis', type=str,
+                       help='Path to GCP file (CSV or KMZ) for GCP analysis. Extracts 300x300 pixel patches from registered orthomosaic centered at each GCP location.')
     
     args = parser.parse_args()
     
@@ -1799,6 +1801,29 @@ def main():
     
     if result:
         print(f"\n✓ Registration complete: {result}")
+        
+        # Run GCP analysis if requested
+        if args.gcp_analysis:
+            from gcp_analysis import analyze_gcps
+            
+            gcp_analysis_output_dir = output_path / 'gcp_analysis'
+            print(f"\n{'='*80}")
+            print("Running GCP Analysis")
+            print(f"{'='*80}")
+            
+            try:
+                analyze_gcps(
+                    registered_orthomosaic_path=str(result),
+                    gcp_file_path=args.gcp_analysis,
+                    output_dir=str(gcp_analysis_output_dir),
+                    patch_size=300
+                )
+                print(f"\n✓ GCP analysis complete. Results saved to: {gcp_analysis_output_dir}")
+            except Exception as e:
+                print(f"\n✗ GCP analysis failed: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the entire registration if GCP analysis fails
     else:
         print("\n✗ Registration failed")
         return 1
