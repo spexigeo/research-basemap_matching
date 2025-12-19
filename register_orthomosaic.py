@@ -252,6 +252,17 @@ class OrthomosaicRegistration:
         logging.info("HIERARCHICAL ORTHOMOSAIC REGISTRATION")
         logging.info("=" * 80)
         
+        # Clean up old intermediate files that shouldn't exist for current scales
+        import re
+        for old_file in self.intermediate_dir.glob('*.aux.xml'):
+            # Extract scale from filename
+            match = re.search(r'scale([\d.]+)', old_file.stem)
+            if match:
+                file_scale = float(match.group(1))
+                if file_scale not in self.scales and file_scale != 1.0:
+                    old_file.unlink()
+                    logging.debug(f"Removed old intermediate file: {old_file.name}")
+        
         # Step 1: Create resolution pyramid (only loads downsampled versions, not full res)
         self.create_resolution_pyramid()
         
