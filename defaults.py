@@ -6,7 +6,7 @@ They can be overridden by user input via command-line arguments, config files, o
 """
 
 # Default scales for hierarchical registration
-DEFAULT_SCALES = [0.125, 0.25, 1.0]
+DEFAULT_SCALES = [0.125, 0.25, 0.5]
 
 # Default transform algorithms for each scale (must match length of DEFAULT_SCALES)
 DEFAULT_ALGORITHMS = ['shift', 'shift', 'shift']

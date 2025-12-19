@@ -3,9 +3,9 @@
 Main registration pipeline for orthomosaic alignment.
 Hierarchical registration using resolution pyramid with cumulative transformations.
 
-Default scales: [0.125, 0.25, 0.5, 1.0]
+Default scales: [0.125, 0.25, 0.5]
 Default matcher: LightGlue
-Default transforms: shift (0.125, 0.25), homography (0.5, 1.0)
+Default transforms: shift (0.125, 0.25, 0.5)
 """
 
 import numpy as np
@@ -108,9 +108,9 @@ class OrthomosaicRegistration:
             source_path: Path to source orthomosaic
             target_path: Path to target basemap
             output_dir: Output directory
-            scales: List of scales (default: [0.125, 0.25, 0.5, 1.0])
+            scales: List of scales (default: [0.125, 0.25, 0.5])
             matcher: Matching method ('lightglue', 'sift', 'orb', 'patch_ncc')
-            transform_types: Dict mapping scale to transform type (default: shift for 0.125/0.25, homography for 0.5/1.0)
+            transform_types: Dict mapping scale to transform type (default: shift for all scales)
             debug_level: Debug level ('none', 'intermediate', 'high')
                 - 'none': Only log file and final orthomosaic
                 - 'intermediate': 'none' + intermediate/ directory files
@@ -423,8 +423,14 @@ class OrthomosaicRegistration:
                               output_basename: str) -> Tuple[Optional[Path], Optional[Path]]:
             # Always save transformed orthomosaic (needed for processing pipeline)
             # At 'none' level, it goes to temp directory which gets cleaned up
+            # Extract TIF filename from output_basename (e.g., "orthomosaic_scale0.250_shift0.125.png" -> "orthomosaic_scale0.250_shift0.125.tif")
+            if output_basename.endswith('.png'):
+                tif_filename = output_basename[:-4] + '.tif'
+            else:
+                tif_filename = output_basename.replace('.png', '.tif') if '.png' in output_basename else output_basename + '.tif'
             transformed_path = self._apply_transform_to_orthomosaic(
-                input_ortho, transform_result, source_scale, target_scale
+                input_ortho, transform_result, source_scale, target_scale,
+                output_filename=tif_filename
             )
             if transformed_path is None:
                 return None, None
@@ -796,13 +802,10 @@ class OrthomosaicRegistration:
                 prev_transform_type = self.transform_types.get(prev_scale, 'shift')
                 prev_ortho_path = self.intermediate_dir / f'orthomosaic_scale{target_scale:.3f}_{prev_transform_type}.tif'
                 
-                if prev_ortho_path.exists():
-                    input_ortho_path = prev_ortho_path
-                    logging.debug(f"    Using previous transform result: {prev_ortho_path.name}")
-                else:
-                    # Fall back to original (shouldn't happen in normal flow)
-                    input_ortho_path = self._get_or_create_downsampled_orthomosaic(target_scale)
-                    logging.warning(f"    Previous transform not found, using original: {input_ortho_path.name}")
+                # Do not use cached previous transform results - always use the base orthomosaic
+                # The previous transform should have been applied in the main registration flow
+                input_ortho_path = self._get_or_create_downsampled_orthomosaic(target_scale)
+                logging.debug(f"    Using base orthomosaic: {input_ortho_path.name}")
             
             if input_ortho_path is None:
                 continue
@@ -826,11 +829,10 @@ class OrthomosaicRegistration:
             )
             # endregion agent log
 
-            # Skip if already exists
+            # Always regenerate - do not use cached transformed orthomosaics
             if output_path.exists():
-                logging.info(f"  Skipping scale {target_scale:.3f} (already transformed: {output_path.name})")
-                cumulative_orthos[target_scale] = output_path
-                continue
+                output_path.unlink()
+                logging.debug(f"  Removed cached transformed orthomosaic: {output_path.name}")
             
             logging.info(f"  Applying {transform_type} to orthomosaic at scale {target_scale:.3f}...")
             logging.info(f"    Input: {input_ortho_path.name}")
@@ -931,17 +933,22 @@ class OrthomosaicRegistration:
             return None
     
     def _apply_transform_to_orthomosaic(self, input_path: Path, transform_result: Dict,
-                                       source_scale: float, target_scale: float) -> Optional[Path]:
+                                       source_scale: float, target_scale: float,
+                                       output_filename: Optional[str] = None) -> Optional[Path]:
         """Apply transformation to orthomosaic, scaling appropriately."""
         # Get transform type from result, with fallback to 'shift' if missing
         transform_type = transform_result.get('type', transform_result.get('transform_type', 'shift'))
         
         # Determine output path in intermediate directory (transformed orthomosaics)
-        output_path = self.intermediate_dir / f'orthomosaic_scale{target_scale:.3f}_{transform_type}.tif'
+        if output_filename:
+            output_path = self.intermediate_dir / output_filename
+        else:
+            output_path = self.intermediate_dir / f'orthomosaic_scale{target_scale:.3f}_{transform_type}.tif'
         
+        # Always regenerate - do not use cached transformed orthomosaics
         if output_path.exists():
-            logging.debug(f"  Output already exists: {output_path.name}")
-            return output_path
+            output_path.unlink()
+            logging.debug(f"  Removed cached transformed orthomosaic: {output_path.name}")
         
         try:
             with rasterio.open(input_path) as src:
@@ -1747,8 +1754,21 @@ class OrthomosaicRegistration:
         else:
             overlap_path = preprocessing_dir / f'source_overlap_scale{scale:.3f}_pretransformed.png'
         
-        if overlap_path.exists():
+        # Only cache preprocessing files (source_overlap_scale*.png, target_overlap_scale*.png in preprocessing/)
+        # All intermediate overlap files (from transformed orthomosaics) should be regenerated
+        is_preprocessing_file = (
+            'pretransformed' not in overlap_path.name and 
+            'shift' not in overlap_path.name and
+            preprocessing_dir.name == 'preprocessing'
+        )
+        
+        if overlap_path.exists() and is_preprocessing_file:
+            # This is a preprocessing file, allow caching
             return overlap_path
+        elif overlap_path.exists():
+            # This is an intermediate overlap file, regenerate it
+            overlap_path.unlink()
+            logging.debug(f"  Removed cached intermediate overlap PNG: {overlap_path.name}")
         
         try:
             # Get overlap info

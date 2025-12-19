@@ -62,7 +62,7 @@ All notebooks walk through the complete registration pipeline:
 2. **Basemap Download**: Download basemap tiles from ESRI World Imagery
 3. **Preprocessing**: 
    - Load source orthomosaic
-   - Create resolution pyramid at multiple scales (0.125, 0.25, 0.5, 1.0)
+   - Create resolution pyramid at multiple scales (0.125, 0.25, 0.5)
    - Compute overlap regions
 4. **Feature Matching**: 
    - Match features using LightGlue at each scale

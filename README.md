@@ -4,7 +4,7 @@ A comprehensive hierarchical system for registering high-resolution orthomosaics
 
 ## Features
 
-- **Hierarchical Registration**: Coarse-to-fine alignment using resolution pyramids (default: 0.125, 0.25, 0.5, 1.0)
+- **Hierarchical Registration**: Coarse-to-fine alignment using resolution pyramids (default: 0.125, 0.25, 0.5)
 - **Multiple Matching Methods**: LightGlue (default), SIFT, ORB, Patch NCC
 - **Multiple Transform Types**: 2D shift, similarity, affine, homography, polynomial (2nd/3rd order), spline, rubber sheeting
 - **Cumulative Transformations**: Each scale builds upon previous transformations for improved accuracy
@@ -37,8 +37,8 @@ python register_orthomosaic.py \
     inputs/qualicum_beach/orthomosaic_no_gcps.tif \
     inputs/qualicum_beach/qualicum_beach_basemap_esri.tif \
     outputs/ \
-    --scales 0.125 0.25 0.5 1.0 \
-    --algorithms shift shift homography homography \
+    --scales 0.125 0.25 0.5 \
+    --algorithms shift shift shift \
     --matcher lightglue \
     --debug intermediate
 ```
@@ -120,7 +120,7 @@ python register_orthomosaic.py \
 - **spline**: Thin-plate spline - Handles complex local distortions
 - **rubber_sheeting**: Piecewise affine - Good for local corrections
 
-**Default Strategy**: Use `shift` for coarse scales (0.125, 0.25) and `homography` for fine scales (0.5, 1.0)
+**Default Strategy**: Use `shift` for all scales (0.125, 0.25, 0.5)
 
 ## Configuration
 
@@ -136,7 +136,7 @@ Positional arguments:
 
 Options:
   --config PATH       Path to JSON configuration file
-  --scales FLOAT ...  Resolution scales (default: 0.125 0.25 0.5 1.0)
+  --scales FLOAT ...  Resolution scales (default: 0.125 0.25 0.5)
   --algorithms STR ... Transform algorithms for each scale
   --matcher STR       Matching method: lightglue, sift, orb, patch_ncc
   --debug LEVEL       Debug level: none, intermediate, high
@@ -154,8 +154,8 @@ Options:
   "source_path": "inputs/qualicum_beach/orthomosaic_no_gcps.tif",
   "target_path": "inputs/qualicum_beach/qualicum_beach_basemap_esri.tif",
   "output_dir": "outputs/",
-  "hierarchical_scales": [0.125, 0.25, 0.5, 1.0],
-  "algorithms": ["shift", "shift", "homography", "homography"],
+  "hierarchical_scales": [0.125, 0.25, 0.5],
+  "algorithms": ["shift", "shift", "shift"],
   "method": "lightglue",
   "debug_level": "intermediate"
 }
@@ -270,7 +270,7 @@ For each scale, generates:
 
 ### For Seasonal Changes
 - Use `lightglue` or `patch_ncc` matcher
-- Use hierarchical scales: `[0.125, 0.25, 0.5, 1.0]`
+- Use hierarchical scales: `[0.125, 0.25, 0.5]`
 - Start with `shift` transforms, refine with `homography`
 
 ### For Large Images
