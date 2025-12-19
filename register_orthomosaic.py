@@ -885,7 +885,8 @@ class OrthomosaicRegistration:
     def _apply_transform_to_orthomosaic(self, input_path: Path, transform_result: Dict,
                                        source_scale: float, target_scale: float) -> Optional[Path]:
         """Apply transformation to orthomosaic, scaling appropriately."""
-        transform_type = transform_result['type']
+        # Get transform type from result, with fallback to 'shift' if missing
+        transform_type = transform_result.get('type', transform_result.get('transform_type', 'shift'))
         
         # Determine output path in intermediate directory (transformed orthomosaics)
         output_path = self.intermediate_dir / f'orthomosaic_scale{target_scale:.3f}_{transform_type}.tif'
