@@ -240,22 +240,25 @@ class ImagePreprocessor:
         tgt_y1_raw = min(tgt_row_top, tgt_row_bottom)
         tgt_y2_raw = max(tgt_row_top, tgt_row_bottom)
         
-        # Convert to integer pixel coordinates and scale
+        # Convert to integer pixel coordinates
+        # Source is downsampled by scale_factor, target is at full resolution
         src_x1 = int(src_x1_raw * scale_factor)
         src_y1 = int(src_y1_raw * scale_factor)
         src_x2 = int(src_x2_raw * scale_factor)
         src_y2 = int(src_y2_raw * scale_factor)
         
-        tgt_x1 = int(tgt_x1_raw * scale_factor)
-        tgt_y1 = int(tgt_y1_raw * scale_factor)
-        tgt_x2 = int(tgt_x2_raw * scale_factor)
-        tgt_y2 = int(tgt_y2_raw * scale_factor)
+        # Target coordinates are at full resolution (no scaling)
+        tgt_x1 = int(tgt_x1_raw)
+        tgt_y1 = int(tgt_y1_raw)
+        tgt_x2 = int(tgt_x2_raw)
+        tgt_y2 = int(tgt_y2_raw)
         
         # Ensure coordinates are within image bounds
         src_height = int(self.source_shape[0] * scale_factor)
         src_width = int(self.source_shape[1] * scale_factor)
-        tgt_height = int(self.target_shape[0] * scale_factor)
-        tgt_width = int(self.target_shape[1] * scale_factor)
+        # Target is at full resolution
+        tgt_height = self.target_shape[0]
+        tgt_width = self.target_shape[1]
         
         # Clamp to valid ranges
         src_x1 = max(0, min(src_x1, src_width - 1))
