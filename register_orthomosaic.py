@@ -177,10 +177,32 @@ class OrthomosaicRegistration:
         self._source_crs = None
         self._source_transform = None
         
+        # Store actual pixel resolutions (will be computed when preprocessor metadata is loaded)
+        self._source_pixel_resolution = None  # meters per pixel at full resolution
+        self._target_pixel_resolution = None  # meters per pixel at full resolution
+        
         logging.info(f"Initialized registration:")
         logging.info(f"  Scales: {self.scales}")
         logging.info(f"  Matcher: {self.matcher}")
         logging.info(f"  Transform types: {self.transform_types}")
+    
+    @property
+    def source_pixel_resolution(self):
+        """Get actual source pixel resolution in meters per pixel at full resolution."""
+        if self._source_pixel_resolution is None:
+            # Trigger metadata loading
+            _ = self.preprocessor.source_res
+            self._source_pixel_resolution = self.preprocessor.source_res
+        return self._source_pixel_resolution
+    
+    @property
+    def target_pixel_resolution(self):
+        """Get actual target pixel resolution in meters per pixel at full resolution."""
+        if self._target_pixel_resolution is None:
+            # Trigger metadata loading
+            _ = self.preprocessor.target_res
+            self._target_pixel_resolution = self.preprocessor.target_res
+        return self._target_pixel_resolution
     
     @property
     def source_crs(self):
@@ -643,7 +665,8 @@ class OrthomosaicRegistration:
                         source_mask: np.ndarray, target_mask: np.ndarray,
                         scale: float) -> Optional[Dict]:
         """Compute matches using specified matcher."""
-        pixel_resolution = 0.02 / scale  # meters per pixel
+        # Use actual source pixel resolution, scaled by the current scale factor
+        pixel_resolution = self.source_pixel_resolution / scale  # meters per pixel at this scale
         
         if self.matcher == 'lightglue':
             if not LIGHTGLUE_AVAILABLE:
@@ -959,7 +982,8 @@ class OrthomosaicRegistration:
                 if transform_type in ['shift', 'similarity', 'affine', 'homography']:
                     # Matrix-based transformation
                     # Use meters version if available, otherwise fall back to pixels
-                    target_pixel_resolution = 0.02 / target_scale
+                    # Use actual source pixel resolution at target scale
+                    target_pixel_resolution = self.source_pixel_resolution / target_scale
                     
                     if 'matrix_meters' in transform_result and transform_result['matrix_meters'] is not None:
                         # Transformation is stored in meters - convert to pixels at target scale
@@ -1303,7 +1327,8 @@ class OrthomosaicRegistration:
                             logging.debug(f"    Updated transform origin: shift=({shift_x_meters:.3f}m, {shift_y_meters:.3f}m) = ({lon_shift_deg:.9f}°, {lat_shift_deg:.9f}°)")
                         else:
                             # For other CRS, use pixel resolution to convert
-                            pixel_resolution = 0.02 / target_scale
+                            # Use actual source pixel resolution at target scale
+                            pixel_resolution = self.source_pixel_resolution / target_scale
                             if hasattr(orig_transform, 'a') and abs(orig_transform.a) > 0:
                                 # Transform has pixel size in CRS units
                                 shift_x_crs = shift_x_meters / pixel_resolution * abs(orig_transform.a)
