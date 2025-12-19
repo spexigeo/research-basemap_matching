@@ -1013,11 +1013,9 @@ class OrthomosaicRegistration:
                                 shift_x_meters = M_meters[0, 2]
                                 shift_y_meters = M_meters[1, 2]
                                 
-                                # Scale shift from source_scale to target_scale if needed
-                                if source_scale != target_scale:
-                                    scale_factor = target_scale / source_scale
-                                    shift_x_meters = shift_x_meters * scale_factor
-                                    shift_y_meters = shift_y_meters * scale_factor
+                                # NOTE: Meters are ABSOLUTE - do NOT scale them when applying across scales!
+                                # The transform is stored in meters, which are scale-invariant.
+                                # We only need to convert meters to pixels at the target scale resolution.
                                 
                                 # Convert shift from meters to CRS units
                                 if orig_crs and orig_crs.to_epsg() == 4326:
@@ -1284,11 +1282,9 @@ class OrthomosaicRegistration:
                         shift_x_meters = M_meters[0, 2]
                         shift_y_meters = M_meters[1, 2]
                         
-                        # Scale shift from source_scale to target_scale if needed
-                        if source_scale != target_scale:
-                            scale_factor = target_scale / source_scale
-                            shift_x_meters = shift_x_meters * scale_factor
-                            shift_y_meters = shift_y_meters * scale_factor
+                        # NOTE: Meters are ABSOLUTE - do NOT scale them when applying across scales!
+                        # The transform is stored in meters, which are scale-invariant.
+                        # We only need to convert meters to pixels at the target scale resolution.
                         
                         # Convert shift from meters to CRS units (degrees for EPSG:4326)
                         if orig_crs and orig_crs.to_epsg() == 4326:
