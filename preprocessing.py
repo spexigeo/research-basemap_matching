@@ -284,7 +284,7 @@ class ImagePreprocessor:
         return overlap_info
     
     def load_downsampled(self, scale_factor: float) -> Tuple[np.ndarray, np.ndarray]:
-        """Load downsampled versions of source and target images."""
+        """Load downsampled source image and full-resolution target image."""
         
         def load_and_downsample(path: Path, scale: float) -> np.ndarray:
             with rasterio.open(path) as src:
@@ -326,9 +326,43 @@ class ImagePreprocessor:
                 
                 return gray
         
-        # Load and downsample directly (no cache files - overlap images are saved separately)
+        def load_full_resolution(path: Path) -> np.ndarray:
+            """Load target image at full resolution (no downsampling)."""
+            with rasterio.open(path) as src:
+                logging.info(f"  Loading {path.name} at full resolution -> {src.width}x{src.height}")
+                
+                # Read RGB bands if available, otherwise first band
+                if src.count >= 3:
+                    indexes = [1, 2, 3]
+                    num_bands = 3
+                else:
+                    indexes = [1]
+                    num_bands = 1
+                
+                data = src.read(indexes=indexes)
+                
+                # Convert to 8-bit grayscale
+                if data.shape[0] >= 3:
+                    rgb = np.moveaxis(data[:3], 0, -1)
+                    rgb_min, rgb_max = rgb.min(), rgb.max()
+                    if rgb_max > rgb_min:
+                        rgb_normalized = ((rgb - rgb_min) / (rgb_max - rgb_min) * 255).astype(np.uint8)
+                    else:
+                        rgb_normalized = np.zeros_like(rgb, dtype=np.uint8)
+                    gray = cv2.cvtColor(rgb_normalized, cv2.COLOR_RGB2GRAY)
+                else:
+                    single = data[0]
+                    single_min, single_max = single.min(), single.max()
+                    if single_max > single_min:
+                        gray = ((single - single_min) / (single_max - single_min) * 255).astype(np.uint8)
+                    else:
+                        gray = np.zeros((src.height, src.width), dtype=np.uint8)
+                
+                return gray
+        
+        # Load source downsampled, target at full resolution
         source_img = load_and_downsample(self.source_path, scale_factor)
-        target_img = load_and_downsample(self.target_path, scale_factor)
+        target_img = load_full_resolution(self.target_path)
         
         return source_img, target_img
     
