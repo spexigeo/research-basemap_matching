@@ -573,24 +573,37 @@ class OrthomosaicRegistration:
                 logging.error("Final output was not generated.")
                 return None
         else:
-            # If 1.0 is NOT in scales, apply the last transform (from highest scale) to full resolution
-            # Get the last transform (from the highest scale processed)
+            # If 1.0 is NOT in scales, apply CUMULATIVE transforms to full resolution
+            # We need to accumulate all transforms from all scales
             last_scale = max(self.scales)
-            last_transform = transform_c if scale_c in self.scales else transform_b
             
             logging.info(f"\n{'='*80}")
-            logging.info(f"Applying transform from scale {last_scale:.3f} to full resolution (1.0)")
+            logging.info(f"Applying cumulative transforms to full resolution (1.0)")
             logging.info(f"{'='*80}")
             
             # Get full resolution orthomosaic
             ortho_fullres = get_base_ortho(scale_d)
             
-            # Apply the last transform, scaling it from last_scale to 1.0
-            # Transformations are stored in meters, so we need to scale translation components
-            # by the ratio of resolutions: 1.0 / last_scale
-            ortho_final = self._apply_transform_to_orthomosaic(
-                ortho_fullres, last_transform, last_scale, scale_d
-            )
+            # Apply transforms cumulatively, starting from the base orthomosaic
+            current_ortho = ortho_fullres
+            for scale in sorted(self.scales):
+                # Get transform for this scale
+                if scale == scale_b:
+                    current_transform = transform_b
+                elif scale == scale_c and scale_c in self.scales:
+                    current_transform = transform_c
+                else:
+                    continue
+                
+                logging.info(f"Applying transform from scale {scale:.3f} to full resolution")
+                current_ortho = self._apply_transform_to_orthomosaic(
+                    current_ortho, current_transform, scale, scale_d
+                )
+                if current_ortho is None:
+                    logging.error(f"Failed to apply transform from scale {scale:.3f}")
+                    return None
+            
+            ortho_final = current_ortho
             
             if ortho_final and ortho_final.exists():
                 import shutil
@@ -989,6 +1002,12 @@ class OrthomosaicRegistration:
                                 shift_x_meters = M_meters[0, 2]
                                 shift_y_meters = M_meters[1, 2]
                                 
+                                # Scale shift from source_scale to target_scale if needed
+                                if source_scale != target_scale:
+                                    scale_factor = target_scale / source_scale
+                                    shift_x_meters = shift_x_meters * scale_factor
+                                    shift_y_meters = shift_y_meters * scale_factor
+                                
                                 # Convert shift from meters to CRS units
                                 if orig_crs and orig_crs.to_epsg() == 4326:
                                     center_lat = (orig_transform[5] + orig_transform[5] + height * orig_transform[4]) / 2
@@ -1000,6 +1019,7 @@ class OrthomosaicRegistration:
                                         orig_transform[0], orig_transform[1], orig_transform[2] + lon_shift_deg,
                                         orig_transform[3], orig_transform[4], orig_transform[5] + lat_shift_deg
                                     )
+                                    logging.debug(f"    Updated transform origin (tiled): shift=({shift_x_meters:.3f}m, {shift_y_meters:.3f}m) = ({lon_shift_deg:.9f}°, {lat_shift_deg:.9f}°)")
                         
                         # Tiled warp to avoid SHRT_MAX and huge buffers
                         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1253,6 +1273,12 @@ class OrthomosaicRegistration:
                         shift_x_meters = M_meters[0, 2]
                         shift_y_meters = M_meters[1, 2]
                         
+                        # Scale shift from source_scale to target_scale if needed
+                        if source_scale != target_scale:
+                            scale_factor = target_scale / source_scale
+                            shift_x_meters = shift_x_meters * scale_factor
+                            shift_y_meters = shift_y_meters * scale_factor
+                        
                         # Convert shift from meters to CRS units (degrees for EPSG:4326)
                         if orig_crs and orig_crs.to_epsg() == 4326:
                             # For WGS84, approximate conversion: 1 degree lat ≈ 111,320 m, 1 degree lon ≈ 111,320 * cos(lat) m
@@ -1267,6 +1293,7 @@ class OrthomosaicRegistration:
                                 orig_transform[0], orig_transform[1], orig_transform[2] + lon_shift_deg,
                                 orig_transform[3], orig_transform[4], orig_transform[5] + lat_shift_deg
                             )
+                            logging.debug(f"    Updated transform origin: shift=({shift_x_meters:.3f}m, {shift_y_meters:.3f}m) = ({lon_shift_deg:.9f}°, {lat_shift_deg:.9f}°)")
                         else:
                             # For other CRS, use pixel resolution to convert
                             pixel_resolution = 0.02 / target_scale
