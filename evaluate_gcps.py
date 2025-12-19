@@ -120,18 +120,29 @@ def evaluate_registration(
     """
     output_path = Path(output_dir)
     
-    # Find the most recent run if timestamp not specified
-    if run_timestamp:
-        run_dir = output_path / f"run_{run_timestamp}"
-    else:
-        # Find most recent run directory
-        run_dirs = sorted([d for d in output_path.iterdir() if d.is_dir() and d.name.startswith('run_')])
-        if not run_dirs:
-            raise ValueError(f"No run directories found in {output_path}")
-        run_dir = run_dirs[-1]
-        print(f"Using most recent run: {run_dir.name}")
+    # Check if using new directory structure (no run_ subdirectories)
+    # New structure: outputs/intermediate/, outputs/matching_and_transformations/
+    # Old structure: outputs/run_*/intermediate/
+    intermediate_dir = output_path / 'intermediate'
+    matching_dir = output_path / 'matching_and_transformations'
     
-    intermediate_dir = run_dir / 'intermediate'
+    if not intermediate_dir.exists():
+        # Try old structure with run_ directories
+        if run_timestamp:
+            run_dir = output_path / f"run_{run_timestamp}"
+        else:
+            # Find most recent run directory
+            run_dirs = sorted([d for d in output_path.iterdir() if d.is_dir() and d.name.startswith('run_')])
+            if not run_dirs:
+                raise ValueError(f"No intermediate directory found in {output_path}. Expected 'intermediate/' or 'run_*/' subdirectories.")
+            run_dir = run_dirs[-1]
+            print(f"Using most recent run: {run_dir.name}")
+        
+        intermediate_dir = run_dir / 'intermediate'
+        matching_dir = run_dir / 'matching_and_transformations' if (run_dir / 'matching_and_transformations').exists() else None
+    else:
+        # Using new structure
+        run_dir = output_path
     
     # Load source image metadata
     with rasterio.open(source_path) as src:
@@ -174,10 +185,16 @@ def evaluate_registration(
         return
     
     # Find all transform files
-    transform_files = sorted(intermediate_dir.glob('transform_level*_scale*.txt'))
+    # Try new structure first (matching_and_transformations/)
+    transform_files = []
+    if matching_dir and matching_dir.exists():
+        transform_files = sorted(matching_dir.glob('transform_scale*.json'))
+    # Fallback to old structure or intermediate_dir
+    if not transform_files:
+        transform_files = sorted(intermediate_dir.glob('transform_level*_scale*.txt'))
     
     if not transform_files:
-        print(f"\nWARNING: No transform files found in {intermediate_dir}")
+        print(f"\nWARNING: No transform files found in {intermediate_dir} or {matching_dir}")
         print("  This may mean all scales were skipped or registration failed")
         return
     
@@ -231,8 +248,23 @@ def evaluate_registration(
         
         print(f"\nEvaluating: {transform_file.name} (level {level}, scale {scale})")
         
-        # Load transform (this is at the scale it was computed)
-        M_at_scale = np.loadtxt(transform_file)
+        # Load transform (JSON format in new structure, text in old)
+        if transform_file.suffix == '.json':
+            with open(transform_file, 'r') as f:
+                transform_data = json.load(f)
+            M_at_scale = np.array(transform_data.get('matrix', transform_data.get('transform_matrix', [])))
+            if M_at_scale.size == 0:
+                print(f"  Warning: Could not extract matrix from {transform_file.name}")
+                continue
+            # Ensure it's 2x3 for affine/homography
+            if M_at_scale.shape == (3, 3):
+                M_at_scale = M_at_scale[:2, :]
+            elif M_at_scale.shape != (2, 3):
+                print(f"  Warning: Unexpected matrix shape {M_at_scale.shape} in {transform_file.name}")
+                continue
+        else:
+            # Old format: text file
+            M_at_scale = np.loadtxt(transform_file)
         
         # The transform in the file is in "full image coordinates at current scale"
         # We need to scale it to full resolution for accumulation
@@ -336,7 +368,7 @@ def evaluate_registration(
         print(f"  Median error: {median_error:.2f}m")
     
     # Save results
-    results_file = run_dir / 'gcp_evaluation.json'
+    results_file = output_path / 'gcp_evaluation.json'
     with open(results_file, 'w') as f:
         json.dump({
             'gcp_count': len(gcp_pixels),
@@ -380,7 +412,7 @@ def evaluate_registration(
         axes[1].grid(True, alpha=0.3)
     
     plt.tight_layout()
-    viz_file = run_dir / 'gcp_evaluation.png'
+    viz_file = output_path / 'gcp_evaluation.png'
     plt.savefig(viz_file, dpi=150, bbox_inches='tight')
     print(f"Visualization saved to: {viz_file}")
     

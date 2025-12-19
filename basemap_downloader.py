@@ -189,21 +189,46 @@ def h3_cells_to_bbox(h3_cells: List[str]) -> Tuple[float, float, float, float]:
 
 def load_h3_cells_from_file(file_path: Path) -> List[str]:
     """
-    Load H3 cells from a text file (one per line).
+    Load H3 cells from a text file (one per line) or XML file.
     
     Args:
-        file_path: Path to file containing H3 cells
+        file_path: Path to file containing H3 cells (text or XML)
         
     Returns:
         List of H3 cell identifiers
     """
     h3_cells = []
-    with open(file_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#'):  # Skip empty lines and comments
-                h3_cells.append(line)
-    return h3_cells
+    file_path = Path(file_path)
+    
+    # Check if it's an XML file
+    if file_path.suffix.lower() == '.xml':
+        # Parse XML file (Word XML format)
+        import xml.etree.ElementTree as ET
+        try:
+            tree = ET.parse(file_path)
+            root = tree.getroot()
+            
+            # Find all text elements containing H3 cells
+            # H3 cells are typically 15-character hex strings
+            for elem in root.iter():
+                if elem.text:
+                    text = elem.text.strip()
+                    # H3 cells are typically 15-character hex strings
+                    if len(text) == 15 and all(c in '0123456789abcdef' for c in text.lower()):
+                        h3_cells.append(text)
+            
+            # Remove duplicates and return
+            return list(set(h3_cells))
+        except ET.ParseError as e:
+            raise ValueError(f"Failed to parse XML file {file_path}: {e}")
+    else:
+        # Plain text file (one H3 cell per line)
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):  # Skip empty lines and comments
+                    h3_cells.append(line)
+        return h3_cells
 
 
 def parse_bbox_string(bbox_str: str) -> Tuple[float, float, float, float]:

@@ -48,15 +48,18 @@ def setup_file_logging(output_dir: Path, debug_level: str = 'none'):
     Args:
         output_dir: Output directory
         debug_level: 'none', 'intermediate', or 'high'
-            - 'none': registration.log with INFO level
-            - 'intermediate': registration.log with INFO level
-            - 'high': registration_verbose.log with DEBUG level
+            - 'none': registration_verbose_low.log with INFO level
+            - 'intermediate': registration_verbose_intermediate.log with INFO level
+            - 'high': registration_verbose_high.log with DEBUG level
     """
     if debug_level == 'high':
-        log_file = output_dir / 'registration_verbose.log'
+        log_file = output_dir / 'registration_verbose_high.log'
         log_level = logging.DEBUG
+    elif debug_level == 'intermediate':
+        log_file = output_dir / 'registration_verbose_intermediate.log'
+        log_level = logging.INFO
     else:
-        log_file = output_dir / 'registration.log'
+        log_file = output_dir / 'registration_verbose_low.log'
         log_level = logging.INFO
     
     file_handler = logging.FileHandler(log_file, mode='w')
@@ -96,7 +99,8 @@ class OrthomosaicRegistration:
                  scales: Optional[List[float]] = None,
                  matcher: str = 'lightglue',
                  transform_types: Optional[Dict[float, str]] = None,
-                 debug_level: str = 'none'):
+                 debug_level: str = 'none',
+                 gcp_evaluation_path: Optional[str] = None):
         """
         Initialize registration.
         
@@ -111,6 +115,7 @@ class OrthomosaicRegistration:
                 - 'none': Only log file and final orthomosaic
                 - 'intermediate': 'none' + intermediate/ directory files
                 - 'high': 'intermediate' + matching_and_transformations/ directory files + verbose log
+            gcp_evaluation_path: Optional path to GCP file (CSV or KMZ) for evaluation at second-to-last scale
         """
         self.source_path = Path(source_path)
         self.target_path = Path(target_path)
@@ -163,6 +168,7 @@ class OrthomosaicRegistration:
             self.transform_types = transform_types
         
         self.matcher = matcher.lower() if matcher else DEFAULT_MATCHER
+        self.gcp_evaluation_path = gcp_evaluation_path
         
         # Initialize preprocessor (will lazy-load metadata when needed)
         self.preprocessor = ImagePreprocessor(source_path, target_path, self.output_dir)
@@ -426,10 +432,11 @@ class OrthomosaicRegistration:
         if ortho_b_shift0125 is None:
             return None
         
-        # c) matches at 0.25 using shifted source -> shift0.250
+        # c) matches at 0.25 using shifted source -> use transform type from config
+        transform_type_b = self.transform_types.get(scale_b, 'shift')
         transform_b, _ = run_matching(
             overlap_b_shift0125_png, overlap_dir / f'target_overlap_scale{scale_b:.3f}.png',
-            scale_b, 'shift', transform_json_name=f'transform_scale{scale_b:.3f}.json'
+            scale_b, transform_type_b, transform_json_name=f'transform_scale{scale_b:.3f}.json'
         )
         if transform_b is None:
             return None
@@ -438,54 +445,118 @@ class OrthomosaicRegistration:
             output_basename=f'orthomosaic_scale{scale_b:.3f}_shift0.250.png'
         )
         
-        # d) apply transform_scale0.250 to scale 0.5 -> shift0.250
+        # Run GCP evaluation at second-to-last scale if requested
+        if self.gcp_evaluation_path and len(self.scales) >= 2:
+            second_to_last_scale = self.scales[-2]  # Second-to-last scale
+            if scale_b == second_to_last_scale:
+                logging.info(f"\n{'='*80}")
+                logging.info(f"Running GCP Evaluation at scale {second_to_last_scale:.3f} (second-to-last)")
+                logging.info(f"{'='*80}")
+                try:
+                    from gcp_analysis import analyze_gcps
+                    # Use the transformed orthomosaic at this scale for evaluation
+                    # Create patches like gcp_analysis does
+                    gcp_evaluation_output_dir = self.output_dir / 'gcp_analysis'
+                    analyze_gcps(
+                        registered_orthomosaic_path=str(ortho_b_shift0250),
+                        gcp_file_path=self.gcp_evaluation_path,
+                        output_dir=str(gcp_evaluation_output_dir),
+                        patch_size=300
+                    )
+                    logging.info(f"✓ GCP evaluation complete for scale {second_to_last_scale:.3f}")
+                except Exception as e:
+                    logging.warning(f"GCP evaluation failed at scale {second_to_last_scale:.3f}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        # d) apply transform_scale0.250 to scale 0.5 -> shift0.250 (if 0.5 is in scales)
         scale_c = 0.5
-        ortho_c_base = get_base_ortho(scale_c)
-        ortho_c_shift0250, overlap_c_shift0250_png = apply_and_overlap(
-            ortho_c_base, transform_b, scale_b, scale_c,
-            output_basename=f'orthomosaic_scale{scale_c:.3f}_shift0.250.png'
-        )
-        if ortho_c_shift0250 is None:
-            return None
+        transform_c = transform_b  # Default: use transform_b if scale_c is skipped
+        ortho_c_shift0500 = ortho_b_shift0250  # Default: use previous ortho if scale_c is skipped
         
-        # e) matches at 0.5 using shifted source -> homography
-        transform_c, _ = run_matching(
-            overlap_c_shift0250_png, overlap_dir / f'target_overlap_scale{scale_c:.3f}.png',
-            scale_c, 'homography', transform_json_name=f'transform_scale{scale_c:.3f}.json'
-        )
-        if transform_c is None:
-            return None
-        ortho_c_shift0500, overlap_c_shift0500_png = apply_and_overlap(
-            ortho_c_shift0250, transform_c, scale_c, scale_c,
-            output_basename=f'orthomosaic_scale{scale_c:.3f}_homography.png'
-        )
+        if scale_c in self.scales:
+            ortho_c_base = get_base_ortho(scale_c)
+            ortho_c_shift0250, overlap_c_shift0250_png = apply_and_overlap(
+                ortho_c_base, transform_b, scale_b, scale_c,
+                output_basename=f'orthomosaic_scale{scale_c:.3f}_shift0.250.png'
+            )
+            if ortho_c_shift0250 is None:
+                return None
+            
+            # e) matches at 0.5 using shifted source -> use transform type from config
+            transform_type_c = self.transform_types.get(scale_c, 'homography')
+            transform_c, _ = run_matching(
+                overlap_c_shift0250_png, overlap_dir / f'target_overlap_scale{scale_c:.3f}.png',
+                scale_c, transform_type_c, transform_json_name=f'transform_scale{scale_c:.3f}.json'
+            )
+            if transform_c is None:
+                return None
+            # Use transform type in filename for clarity
+            transform_type_c = self.transform_types.get(scale_c, 'homography')
+            ortho_c_shift0500, overlap_c_shift0500_png = apply_and_overlap(
+                ortho_c_shift0250, transform_c, scale_c, scale_c,
+                output_basename=f'orthomosaic_scale{scale_c:.3f}_{transform_type_c}.png'
+            )
+            
+            # Run GCP evaluation at second-to-last scale if requested
+            if self.gcp_evaluation_path and len(self.scales) >= 2:
+                second_to_last_scale = self.scales[-2]  # Second-to-last scale
+                if scale_c == second_to_last_scale:
+                    logging.info(f"\n{'='*80}")
+                    logging.info(f"Running GCP Evaluation at scale {second_to_last_scale:.3f} (second-to-last)")
+                    logging.info(f"{'='*80}")
+                    try:
+                        from gcp_analysis import analyze_gcps
+                        # Use the transformed orthomosaic at this scale for evaluation
+                        # Create patches like gcp_analysis does
+                        gcp_evaluation_output_dir = self.output_dir / 'gcp_analysis'
+                        analyze_gcps(
+                            registered_orthomosaic_path=str(ortho_c_shift0500),
+                            gcp_file_path=self.gcp_evaluation_path,
+                            output_dir=str(gcp_evaluation_output_dir),
+                            patch_size=300
+                        )
+                        logging.info(f"✓ GCP evaluation complete for scale {second_to_last_scale:.3f}")
+                    except Exception as e:
+                        logging.warning(f"GCP evaluation failed at scale {second_to_last_scale:.3f}: {e}")
+                        import traceback
+                        traceback.print_exc()
         
-        # f) apply transform_scale0.500 to scale 1.0 -> shift0.500
+        # f) apply previous transform to scale 1.0
         scale_d = 1.0
-        ortho_d_base = get_base_ortho(scale_d)
-        ortho_d_shift0500, overlap_d_shift0500_png = apply_and_overlap(
-            ortho_d_base, transform_c, scale_c, scale_d,
-            output_basename=f'orthomosaic_scale{scale_d:.3f}_shift0.500.png'
-        )
-        if ortho_d_shift0500 is None:
+        if scale_d not in self.scales:
+            logging.error(f"Scale {scale_d} must be in scales list (it's the final scale)")
             return None
         
-        # g) matches at 1.0 using shifted source -> homography final
+        ortho_d_base = get_base_ortho(scale_d)
+        # Use transform_c (which may be transform_b if scale_c was skipped)
+        prev_scale = scale_c if scale_c in self.scales else scale_b
+        ortho_d_shift_prev, overlap_d_shift_prev_png = apply_and_overlap(
+            ortho_d_base, transform_c, prev_scale, scale_d,
+            output_basename=f'orthomosaic_scale{scale_d:.3f}_shift{prev_scale:.3f}.png'
+        )
+        if ortho_d_shift_prev is None:
+            return None
+        
+        # g) matches at 1.0 using shifted source -> use transform type from config
+        transform_type_d = self.transform_types.get(scale_d, 'shift')
         transform_d, _ = run_matching(
-            overlap_d_shift0500_png, overlap_dir / f'target_overlap_scale{scale_d:.3f}.png',
-            scale_d, 'homography', transform_json_name=f'transform_scale{scale_d:.3f}.json'
+            overlap_d_shift_prev_png, overlap_dir / f'target_overlap_scale{scale_d:.3f}.png',
+            scale_d, transform_type_d, transform_json_name=f'transform_scale{scale_d:.3f}.json'
         )
         if transform_d is None:
             return None
-        ortho_d_shift1000, _ = apply_and_overlap(
-            ortho_d_shift0500, transform_d, scale_d, scale_d,
-            output_basename=f'orthomosaic_scale{scale_d:.3f}_homography.png'
+        # Use transform type in filename for clarity
+        transform_type_d = self.transform_types.get(scale_d, 'shift')
+        ortho_d_final, _ = apply_and_overlap(
+            ortho_d_shift_prev, transform_d, scale_d, scale_d,
+            output_basename=f'orthomosaic_scale{scale_d:.3f}_{transform_type_d}.png'
         )
         
         final_output = self.output_dir / 'orthomosaic_registered.tif'
-        if ortho_d_shift1000 and ortho_d_shift1000.exists():
+        if ortho_d_final and ortho_d_final.exists():
             import shutil
-            shutil.copy(ortho_d_shift1000, final_output)
+            shutil.copy(ortho_d_final, final_output)
             logging.info(f"Final output: {final_output}")
             
             # Clean up temp intermediate directory if used (at 'none' debug level)
@@ -495,8 +566,9 @@ class OrthomosaicRegistration:
                 logging.debug(f"Cleaned up temporary directory: {self._temp_intermediate_dir}")
             
             return final_output
-        
-        logging.error("Final output was not generated.")
+        else:
+            logging.error("Final output was not generated.")
+            return None
         
         # Clean up temp directory even on failure
         if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
@@ -1613,6 +1685,8 @@ def main():
                        help='Target resolution in meters per pixel for basemap download (alternative to --basemap-zoom)')
     parser.add_argument('--gcp-analysis', type=str,
                        help='Path to GCP file (CSV or KMZ) for GCP analysis. Extracts 300x300 pixel patches from registered orthomosaic centered at each GCP location.')
+    parser.add_argument('--gcp-evaluation', type=str,
+                       help='Path to GCP file (CSV or KMZ) for GCP evaluation. Evaluates registration quality at the second-to-last scale using evaluate_gcps.py.')
     
     args = parser.parse_args()
     
@@ -1684,20 +1758,25 @@ def main():
         basemap_source_name = args.get_basemap.replace('_', '_').lower()
         downloaded_basemap_path = output_dir_path / f'downloaded_basemap_{basemap_source_name}.tif'
         
-        # Download basemap
-        logging.info(f"Downloading basemap from {args.get_basemap}...")
-        try:
-            downloaded_basemap = download_basemap(
-                bbox=bbox,
-                output_path=str(downloaded_basemap_path),
-                source=args.get_basemap,
-                zoom=args.basemap_zoom,
-                target_resolution=args.basemap_resolution
-            )
-            logging.info(f"✓ Basemap downloaded to: {downloaded_basemap}")
-            target_path = downloaded_basemap
-        except Exception as e:
-            parser.error(f'Failed to download basemap: {e}')
+        # Check if basemap already exists
+        if downloaded_basemap_path.exists():
+            logging.info(f"✓ Basemap already exists at: {downloaded_basemap_path}")
+            target_path = str(downloaded_basemap_path)
+        else:
+            # Download basemap
+            logging.info(f"Downloading basemap from {args.get_basemap}...")
+            try:
+                downloaded_basemap = download_basemap(
+                    bbox=bbox,
+                    output_path=str(downloaded_basemap_path),
+                    source=args.get_basemap,
+                    zoom=args.basemap_zoom,
+                    target_resolution=args.basemap_resolution
+                )
+                logging.info(f"✓ Basemap downloaded to: {downloaded_basemap}")
+                target_path = downloaded_basemap
+            except Exception as e:
+                parser.error(f'Failed to download basemap: {e}')
     
     # Validate required parameters
     if not source_path:
@@ -1794,7 +1873,8 @@ def main():
         scales=scales,
         matcher=matcher,
         transform_types=transform_types,
-        debug_level=debug_level
+        debug_level=debug_level,
+        gcp_evaluation_path=args.gcp_evaluation if hasattr(args, 'gcp_evaluation') and args.gcp_evaluation else None
     )
     
     result = registration.register()
