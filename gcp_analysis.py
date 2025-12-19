@@ -121,18 +121,25 @@ def load_gcps_from_csv(csv_path: str) -> List[Dict]:
 
 def lonlat_to_pixel(lon: float, lat: float, transform: Affine, crs) -> Tuple[float, float]:
     """Convert geographic coordinates (WGS84 lon/lat) to pixel coordinates."""
-    # Always transform from WGS84 to the image CRS
-    transformer = pyproj.Transformer.from_crs(
-        pyproj.CRS.from_epsg(4326),  # WGS84 (lon/lat)
-        crs,
-        always_xy=True
-    )
-    x, y = transformer.transform(lon, lat)
-    
-    # Convert to pixel coordinates
-    inv_transform = ~transform
-    col, row = inv_transform * (x, y)
-    return col, row
+    # If CRS is already WGS84 (EPSG:4326), no coordinate transformation needed
+    if crs and crs.to_epsg() == 4326:
+        # Direct conversion using transform
+        inv_transform = ~transform
+        col, row = inv_transform * (lon, lat)
+        return col, row
+    else:
+        # Transform from WGS84 to the image CRS
+        transformer = pyproj.Transformer.from_crs(
+            pyproj.CRS.from_epsg(4326),  # WGS84 (lon/lat)
+            crs,
+            always_xy=True
+        )
+        x, y = transformer.transform(lon, lat)
+        
+        # Convert to pixel coordinates
+        inv_transform = ~transform
+        col, row = inv_transform * (x, y)
+        return col, row
 
 
 def extract_gcp_patch(orthomosaic_path: str, gcp: Dict, patch_size: int = 300) -> Optional[np.ndarray]:

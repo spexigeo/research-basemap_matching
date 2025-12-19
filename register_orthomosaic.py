@@ -902,6 +902,14 @@ class OrthomosaicRegistration:
                 orig_transform = src.transform
                 orig_crs = src.crs
                 
+                # Fix degenerate transform (pixel width/height = 0) by recalculating from bounds
+                if abs(orig_transform.a) < 1e-10 and abs(orig_transform.e) < 1e-10:
+                    logging.warning(f"    Source has degenerate transform, recalculating from bounds")
+                    from rasterio.transform import from_bounds
+                    left, bottom, right, top = src.bounds
+                    orig_transform = from_bounds(left, bottom, right, top, width, height)
+                    logging.info(f"    Recalculated transform: pixel_size=({orig_transform.a:.6f}, {orig_transform.e:.6f})")
+                
                 # Scale factor for transformation
                 scale_factor = target_scale / source_scale
 
@@ -973,6 +981,26 @@ class OrthomosaicRegistration:
                             output_bands.append(transformed_band)
                         output_data = np.stack(output_bands, axis=0)
                     else:
+                        # Calculate updated transform for shift
+                        updated_transform = orig_transform
+                        if transform_type == 'shift' and 'matrix_meters' in transform_result and transform_result['matrix_meters'] is not None:
+                            M_meters = np.array(transform_result['matrix_meters'])
+                            if M_meters.shape == (2, 3):
+                                shift_x_meters = M_meters[0, 2]
+                                shift_y_meters = M_meters[1, 2]
+                                
+                                # Convert shift from meters to CRS units
+                                if orig_crs and orig_crs.to_epsg() == 4326:
+                                    center_lat = (orig_transform[5] + orig_transform[5] + height * orig_transform[4]) / 2
+                                    lat_shift_deg = shift_y_meters / 111320.0
+                                    lon_shift_deg = shift_x_meters / (111320.0 * np.cos(np.radians(center_lat)))
+                                    
+                                    from affine import Affine
+                                    updated_transform = Affine(
+                                        orig_transform[0], orig_transform[1], orig_transform[2] + lon_shift_deg,
+                                        orig_transform[3], orig_transform[4], orig_transform[5] + lat_shift_deg
+                                    )
+                        
                         # Tiled warp to avoid SHRT_MAX and huge buffers
                         output_path.parent.mkdir(parents=True, exist_ok=True)
                         with rasterio.open(
@@ -984,7 +1012,7 @@ class OrthomosaicRegistration:
                             count=num_bands,
                             dtype=np.uint8,
                             crs=orig_crs,
-                            transform=orig_transform,
+                            transform=updated_transform,
                             compress='JPEG',
                             jpeg_quality=90,
                             photometric='RGB' if num_bands == 3 else 'MINISBLACK',
@@ -1215,8 +1243,78 @@ class OrthomosaicRegistration:
                     logging.warning(f"    Unsupported transform type for orthomosaic: {transform_type}")
                     return None
                 
+                # Calculate updated transform based on transformation applied
+                # For shift transformations, adjust the origin by the shift amount
+                updated_transform = orig_transform
+                if transform_type == 'shift' and 'matrix_meters' in transform_result and transform_result['matrix_meters'] is not None:
+                    # Shift transformation: adjust transform origin
+                    M_meters = np.array(transform_result['matrix_meters'])
+                    if M_meters.shape == (2, 3):
+                        shift_x_meters = M_meters[0, 2]
+                        shift_y_meters = M_meters[1, 2]
+                        
+                        # Convert shift from meters to CRS units (degrees for EPSG:4326)
+                        if orig_crs and orig_crs.to_epsg() == 4326:
+                            # For WGS84, approximate conversion: 1 degree lat ≈ 111,320 m, 1 degree lon ≈ 111,320 * cos(lat) m
+                            # Use center latitude for lon conversion
+                            center_lat = (orig_transform[5] + orig_transform[5] + height * orig_transform[4]) / 2
+                            lat_shift_deg = shift_y_meters / 111320.0
+                            lon_shift_deg = shift_x_meters / (111320.0 * np.cos(np.radians(center_lat)))
+                            
+                            # Update transform origin
+                            from affine import Affine
+                            updated_transform = Affine(
+                                orig_transform[0], orig_transform[1], orig_transform[2] + lon_shift_deg,
+                                orig_transform[3], orig_transform[4], orig_transform[5] + lat_shift_deg
+                            )
+                        else:
+                            # For other CRS, use pixel resolution to convert
+                            pixel_resolution = 0.02 / target_scale
+                            if hasattr(orig_transform, 'a') and abs(orig_transform.a) > 0:
+                                # Transform has pixel size in CRS units
+                                shift_x_crs = shift_x_meters / pixel_resolution * abs(orig_transform.a)
+                                shift_y_crs = shift_y_meters / pixel_resolution * abs(orig_transform.e)
+                                from affine import Affine
+                                updated_transform = Affine(
+                                    orig_transform[0], orig_transform[1], orig_transform[2] + shift_x_crs,
+                                    orig_transform[3], orig_transform[4], orig_transform[5] + shift_y_crs
+                                )
+                
                 # Save transformed orthomosaic
                 if written_tiled:
+                    # Update transform in the already-written file
+                    # Note: rasterio doesn't support updating transform after write, so we need to rewrite
+                    # For now, we'll update it by reopening and copying with new transform
+                    if updated_transform != orig_transform:
+                        logging.info(f"    Updating geotransform to account for {transform_type} shift")
+                        # Read the file we just wrote
+                        temp_path = output_path.with_suffix('.tmp.tif')
+                        import shutil
+                        shutil.move(output_path, temp_path)
+                        
+                        with rasterio.open(temp_path) as src_temp:
+                            data = src_temp.read()
+                            with rasterio.open(
+                                output_path,
+                                'w',
+                                driver='GTiff',
+                                height=height,
+                                width=width,
+                                count=num_bands,
+                                dtype=data.dtype,
+                                crs=orig_crs,
+                                transform=updated_transform,
+                                compress='JPEG',
+                                jpeg_quality=90,
+                                photometric='RGB' if num_bands == 3 else 'MINISBLACK',
+                                tiled=True,
+                                blockxsize=512,
+                                blockysize=512
+                            ) as dst:
+                                for band_idx in range(1, num_bands + 1):
+                                    dst.write(data[band_idx - 1], band_idx)
+                        temp_path.unlink()
+                    
                     # region agent log
                     _dbg_log(
                         hypothesis_id="H2",
@@ -1243,7 +1341,7 @@ class OrthomosaicRegistration:
                     count=num_bands,
                     dtype=np.uint8,
                     crs=orig_crs,
-                    transform=orig_transform,
+                    transform=updated_transform,
                     compress='JPEG',
                     jpeg_quality=90,
                     photometric='RGB' if num_bands == 3 else 'MINISBLACK',
