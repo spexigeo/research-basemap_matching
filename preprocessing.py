@@ -326,47 +326,9 @@ class ImagePreprocessor:
                 
                 return gray
         
-        # Check cache in preprocessing directory
-        cache_dir = self.output_dir / 'preprocessing'
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        source_cache = cache_dir / f'source_scale{scale_factor:.3f}.png'
-        target_cache = cache_dir / f'target_scale{scale_factor:.3f}.png'
-        
-        allow_cache = scale_factor < 0.9  # skip cache for large scales to avoid OpenCV pixel limits
-        if allow_cache and source_cache.exists() and target_cache.exists():
-            logging.info(f"  Loading cached images from cache/")
-            try:
-                import os
-                os.environ['OPENCV_IO_MAX_IMAGE_PIXELS'] = '1e9'  # 1 billion pixels
-                source_img = cv2.imread(str(source_cache), cv2.IMREAD_GRAYSCALE)
-                target_img = cv2.imread(str(target_cache), cv2.IMREAD_GRAYSCALE)
-                if source_img is not None and target_img is not None:
-                    return source_img, target_img
-            except Exception as e:
-                logging.warning(f"  Failed to load cached images with OpenCV: {e}")
-                logging.info(f"  Recomputing images...")
-                # Fall through to recompute
-        
-        # Load and downsample
+        # Load and downsample directly (no cache files - overlap images are saved separately)
         source_img = load_and_downsample(self.source_path, scale_factor)
         target_img = load_and_downsample(self.target_path, scale_factor)
-        
-        # Save to cache (skip for very large images at scale 1.0 to avoid OpenCV limits)
-        total_pixels = source_img.shape[0] * source_img.shape[1]
-        if allow_cache and total_pixels < 500_000_000:  # Only cache if < 500 megapixels
-            if not source_cache.exists():
-                try:
-                    cv2.imwrite(str(source_cache), source_img)
-                except Exception as e:
-                    logging.warning(f"  Failed to cache source image: {e}")
-            if not target_cache.exists():
-                try:
-                    cv2.imwrite(str(target_cache), target_img)
-                except Exception as e:
-                    logging.warning(f"  Failed to cache target image: {e}")
-        else:
-            logging.info(f"  Skipping cache for large images ({total_pixels/1e6:.1f} MP)")
         
         return source_img, target_img
     
