@@ -522,53 +522,87 @@ class OrthomosaicRegistration:
                         import traceback
                         traceback.print_exc()
         
-        # f) apply previous transform to scale 1.0
+        # f) Always create final output at full resolution (scale 1.0)
         scale_d = 1.0
-        if scale_d not in self.scales:
-            logging.error(f"Scale {scale_d} must be in scales list (it's the final scale)")
-            return None
-        
-        ortho_d_base = get_base_ortho(scale_d)
-        # Use transform_c (which may be transform_b if scale_c was skipped)
-        prev_scale = scale_c if scale_c in self.scales else scale_b
-        ortho_d_shift_prev, overlap_d_shift_prev_png = apply_and_overlap(
-            ortho_d_base, transform_c, prev_scale, scale_d,
-            output_basename=f'orthomosaic_scale{scale_d:.3f}_shift{prev_scale:.3f}.png'
-        )
-        if ortho_d_shift_prev is None:
-            return None
-        
-        # g) matches at 1.0 using shifted source -> use transform type from config
-        transform_type_d = self.transform_types.get(scale_d, 'shift')
-        transform_d, _ = run_matching(
-            overlap_d_shift_prev_png, overlap_dir / f'target_overlap_scale{scale_d:.3f}.png',
-            scale_d, transform_type_d, transform_json_name=f'transform_scale{scale_d:.3f}.json'
-        )
-        if transform_d is None:
-            return None
-        # Use transform type in filename for clarity
-        transform_type_d = self.transform_types.get(scale_d, 'shift')
-        ortho_d_final, _ = apply_and_overlap(
-            ortho_d_shift_prev, transform_d, scale_d, scale_d,
-            output_basename=f'orthomosaic_scale{scale_d:.3f}_{transform_type_d}.png'
-        )
-        
         final_output = self.output_dir / 'orthomosaic_registered.tif'
-        if ortho_d_final and ortho_d_final.exists():
-            import shutil
-            shutil.copy(ortho_d_final, final_output)
-            logging.info(f"Final output: {final_output}")
+        
+        if scale_d in self.scales:
+            # If 1.0 is in scales, process it normally (compute matches and transform at 1.0)
+            ortho_d_base = get_base_ortho(scale_d)
+            # Use transform_c (which may be transform_b if scale_c was skipped)
+            prev_scale = scale_c if scale_c in self.scales else scale_b
+            ortho_d_shift_prev, overlap_d_shift_prev_png = apply_and_overlap(
+                ortho_d_base, transform_c, prev_scale, scale_d,
+                output_basename=f'orthomosaic_scale{scale_d:.3f}_shift{prev_scale:.3f}.png'
+            )
+            if ortho_d_shift_prev is None:
+                return None
             
-            # Clean up temp intermediate directory if used (at 'none' debug level)
-            if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
+            # g) matches at 1.0 using shifted source -> use transform type from config
+            transform_type_d = self.transform_types.get(scale_d, 'shift')
+            transform_d, _ = run_matching(
+                overlap_d_shift_prev_png, overlap_dir / f'target_overlap_scale{scale_d:.3f}.png',
+                scale_d, transform_type_d, transform_json_name=f'transform_scale{scale_d:.3f}.json'
+            )
+            if transform_d is None:
+                return None
+            # Use transform type in filename for clarity
+            transform_type_d = self.transform_types.get(scale_d, 'shift')
+            ortho_d_final, _ = apply_and_overlap(
+                ortho_d_shift_prev, transform_d, scale_d, scale_d,
+                output_basename=f'orthomosaic_scale{scale_d:.3f}_{transform_type_d}.png'
+            )
+            
+            if ortho_d_final and ortho_d_final.exists():
                 import shutil
-                shutil.rmtree(self._temp_intermediate_dir)
-                logging.debug(f"Cleaned up temporary directory: {self._temp_intermediate_dir}")
-            
-            return final_output
+                shutil.copy(ortho_d_final, final_output)
+                logging.info(f"Final output: {final_output}")
+                
+                # Clean up temp intermediate directory if used (at 'none' debug level)
+                if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
+                    import shutil
+                    shutil.rmtree(self._temp_intermediate_dir)
+                    logging.debug(f"Cleaned up temporary directory: {self._temp_intermediate_dir}")
+                
+                return final_output
+            else:
+                logging.error("Final output was not generated.")
+                return None
         else:
-            logging.error("Final output was not generated.")
-            return None
+            # If 1.0 is NOT in scales, apply the last transform (from highest scale) to full resolution
+            # Get the last transform (from the highest scale processed)
+            last_scale = max(self.scales)
+            last_transform = transform_c if scale_c in self.scales else transform_b
+            
+            logging.info(f"\n{'='*80}")
+            logging.info(f"Applying transform from scale {last_scale:.3f} to full resolution (1.0)")
+            logging.info(f"{'='*80}")
+            
+            # Get full resolution orthomosaic
+            ortho_fullres = get_base_ortho(scale_d)
+            
+            # Apply the last transform, scaling it from last_scale to 1.0
+            # Transformations are stored in meters, so we need to scale translation components
+            # by the ratio of resolutions: 1.0 / last_scale
+            ortho_final = self._apply_transform_to_orthomosaic(
+                ortho_fullres, last_transform, last_scale, scale_d
+            )
+            
+            if ortho_final and ortho_final.exists():
+                import shutil
+                shutil.copy(ortho_final, final_output)
+                logging.info(f"Final output (full resolution): {final_output}")
+                
+                # Clean up temp intermediate directory if used (at 'none' debug level)
+                if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
+                    import shutil
+                    shutil.rmtree(self._temp_intermediate_dir)
+                    logging.debug(f"Cleaned up temporary directory: {self._temp_intermediate_dir}")
+                
+                return final_output
+            else:
+                logging.error("Failed to create final output at full resolution.")
+                return None
         
         # Clean up temp directory even on failure
         if self._temp_intermediate_dir and self._temp_intermediate_dir.exists():
