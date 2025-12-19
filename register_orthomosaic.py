@@ -446,11 +446,13 @@ class OrthomosaicRegistration:
         )
         
         # Run GCP evaluation at second-to-last scale if requested
+        # For scales [0.125, 0.25], we want to evaluate at 0.25 (the highest scale before 1.0)
         if self.gcp_evaluation_path and len(self.scales) >= 2:
-            second_to_last_scale = self.scales[-2]  # Second-to-last scale
-            if scale_b == second_to_last_scale:
+            # Get the highest scale in the list (which is the second-to-last overall, since 1.0 is always final)
+            highest_scale = max(self.scales)
+            if scale_b == highest_scale:
                 logging.info(f"\n{'='*80}")
-                logging.info(f"Running GCP Evaluation at scale {second_to_last_scale:.3f} (second-to-last)")
+                logging.info(f"Running GCP Evaluation at scale {highest_scale:.3f} (second-to-last)")
                 logging.info(f"{'='*80}")
                 try:
                     from gcp_analysis import analyze_gcps
@@ -463,9 +465,9 @@ class OrthomosaicRegistration:
                         output_dir=str(gcp_evaluation_output_dir),
                         patch_size=300
                     )
-                    logging.info(f"✓ GCP evaluation complete for scale {second_to_last_scale:.3f}")
+                    logging.info(f"✓ GCP evaluation complete for scale {highest_scale:.3f}")
                 except Exception as e:
-                    logging.warning(f"GCP evaluation failed at scale {second_to_last_scale:.3f}: {e}")
+                    logging.warning(f"GCP evaluation failed at scale {highest_scale:.3f}: {e}")
                     import traceback
                     traceback.print_exc()
         
@@ -499,11 +501,13 @@ class OrthomosaicRegistration:
             )
             
             # Run GCP evaluation at second-to-last scale if requested
+            # For scales [0.125, 0.25, 0.5], we want to evaluate at 0.5 (the highest scale before 1.0)
             if self.gcp_evaluation_path and len(self.scales) >= 2:
-                second_to_last_scale = self.scales[-2]  # Second-to-last scale
-                if scale_c == second_to_last_scale:
+                # Get the highest scale in the list (which is the second-to-last overall, since 1.0 is always final)
+                highest_scale = max(self.scales)
+                if scale_c == highest_scale:
                     logging.info(f"\n{'='*80}")
-                    logging.info(f"Running GCP Evaluation at scale {second_to_last_scale:.3f} (second-to-last)")
+                    logging.info(f"Running GCP Evaluation at scale {highest_scale:.3f} (second-to-last)")
                     logging.info(f"{'='*80}")
                     try:
                         from gcp_analysis import analyze_gcps
@@ -516,9 +520,9 @@ class OrthomosaicRegistration:
                             output_dir=str(gcp_evaluation_output_dir),
                             patch_size=300
                         )
-                        logging.info(f"✓ GCP evaluation complete for scale {second_to_last_scale:.3f}")
+                        logging.info(f"✓ GCP evaluation complete for scale {highest_scale:.3f}")
                     except Exception as e:
-                        logging.warning(f"GCP evaluation failed at scale {second_to_last_scale:.3f}: {e}")
+                        logging.warning(f"GCP evaluation failed at scale {highest_scale:.3f}: {e}")
                         import traceback
                         traceback.print_exc()
         
