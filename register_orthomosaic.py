@@ -689,7 +689,8 @@ class OrthomosaicRegistration:
     def _compute_transformation(self, src_pts: np.ndarray, dst_pts: np.ndarray,
                                transform_type: str, scale: float) -> Dict:
         """Compute transformation of specified type and convert to meters."""
-        pixel_resolution = 0.02 / scale
+        # Use actual source pixel resolution, scaled by the current scale factor
+        pixel_resolution = self.source_pixel_resolution / scale
         ransac_threshold = 5.0 * (scale / 0.15)  # Scale threshold with resolution
         
         # Compute transformation (in pixels at this scale)
@@ -1440,7 +1441,8 @@ class OrthomosaicRegistration:
         method = matches_result.get('method', self.matcher)
         matches = matches_result.get('matches', [])
         scale_factor = matches_result.get('scale_factor', 1.0)
-        pixel_resolution = 0.02 / scale
+        # Use actual source pixel resolution, scaled by the current scale factor
+        pixel_resolution = self.source_pixel_resolution / scale
         
         # Collect all distances for summary statistics
         distances_pixels = []
@@ -1603,7 +1605,8 @@ class OrthomosaicRegistration:
     def _save_transform_json(self, transform_result: Dict, output_path: Path, scale: float):
         """Save transformation to JSON file."""
         # Add pixel and meter conversions
-        pixel_resolution = 0.02 / scale
+        # Use actual source pixel resolution, scaled by the current scale factor
+        pixel_resolution = self.source_pixel_resolution / scale
         
         transform_data = {
             'scale': scale,
@@ -1660,7 +1663,8 @@ class OrthomosaicRegistration:
         if len(matches_list) == 0:
             return
         
-        pixel_resolution = 0.02 / scale
+        # Use actual source pixel resolution, scaled by the current scale factor
+        pixel_resolution = self.source_pixel_resolution / scale
         
         # Distances for all matches from matches JSON (as-is, no filtering)
         distances_all_m = []
