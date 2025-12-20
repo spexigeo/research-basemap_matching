@@ -203,7 +203,6 @@ research-basemap_matching/
 ├── transformations.py         # Geometric transformation computation and application
 ├── basemap_downloader.py      # Basemap tile downloading utilities
 ├── gcp_analysis.py            # GCP patch extraction and visualization
-├── evaluate_gcps.py           # GCP-based registration quality evaluation
 ├── defaults.py                # Default configuration constants
 ├── example_qualicum_beach.py  # Usage examples for Qualicum Beach dataset
 ├── sample_configs/            # Configuration file templates

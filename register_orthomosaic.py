@@ -2180,7 +2180,7 @@ def main():
     parser.add_argument('--gcp-analysis', type=str,
                        help='Path to GCP file (CSV or KMZ) for GCP analysis. Extracts 300x300 pixel patches from registered orthomosaic centered at each GCP location.')
     parser.add_argument('--gcp-evaluation', type=str,
-                       help='Path to GCP file (CSV or KMZ) for GCP evaluation. Evaluates registration quality at the second-to-last scale using evaluate_gcps.py.')
+                       help='Path to GCP file (CSV or KMZ) for GCP evaluation. Extracts patches from registered orthomosaic at GCP locations using gcp_analysis.py.')
     
     args = parser.parse_args()
     
