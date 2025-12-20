@@ -4,7 +4,14 @@
 """
 # Orthomosaic Registration Pipeline Demo (Marimo)
 
-This Marimo notebook demonstrates the complete hierarchical orthomosaic registration pipeline.
+This Marimo notebook demonstrates the complete hierarchical orthomosaic registration pipeline using the iterative upsample workflow.
+
+The algorithm:
+1. Creates a downsampled orthomosaic at the lowest scale (0.125)
+2. Matches features, computes transformation, and applies it
+3. Upsamples the transformed version to the next scale (0.25)
+4. Repeats matching, transformation, and upsampling for each scale
+5. Applies cumulative transformations to the full-resolution input
 """
 
 import marimo

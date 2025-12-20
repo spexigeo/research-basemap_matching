@@ -229,15 +229,19 @@ research-basemap_matching/
 
 ## Key Features
 
-### Hierarchical Registration
+### Hierarchical Registration (Upsample Workflow)
 
-The system uses a resolution pyramid approach:
-1. Start with coarse scale (0.125) to find approximate alignment
-2. Apply transformation and move to next scale (0.25)
-3. Refine alignment at each scale
-4. Final scale (1.0) produces full-resolution registered orthomosaic
+The system uses an iterative upsample approach that progressively refines alignment:
 
-Transformations are **cumulative** - each scale's transformation is applied to the result from the previous scale.
+1. **Initial Downsampling**: Create a downsampled version of the source orthomosaic at the lowest scale (0.125)
+2. **Match and Transform**: Match features between the downsampled source and target at this scale, compute transformation
+3. **Apply and Upsample**: Apply the transformation to the downsampled orthomosaic, then upsample it to the next scale (0.25)
+4. **Iterate**: Repeat matching, transformation, and upsampling for each scale (0.25 → 0.5)
+5. **Final Output**: The final registered orthomosaic is created separately by applying cumulative transformations to the full-resolution input
+
+**Key advantage**: By upsampling the transformed low-resolution version, each scale builds upon the previous alignment, leading to more accurate registration. Transformations are stored in meters and can be applied cumulatively to the full-resolution orthomosaic.
+
+**Default scales**: `[0.125, 0.25, 0.5]` with algorithms `['shift', 'shift', 'affine']`
 
 ### Basemap Download
 
@@ -270,7 +274,7 @@ For each scale, generates:
 ### For Seasonal Changes
 - Use `lightglue` or `patch_ncc` matcher
 - Use hierarchical scales: `[0.125, 0.25, 0.5]`
-- Start with `shift` transforms, refine with `homography`
+- Start with `shift` transforms, refine with `affine` or `homography`
 
 ### For Large Images
 - Start with coarse scales: `[0.125, 0.25]`

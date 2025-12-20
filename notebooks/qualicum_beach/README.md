@@ -56,22 +56,29 @@ marimo edit registration_demo.py
 
 ## What the Notebooks Demonstrate
 
-All notebooks walk through the complete registration pipeline:
+All notebooks walk through the complete registration pipeline using the **iterative upsample workflow**:
 
 1. **H3 Cell Parsing**: Extract H3 cell IDs from XML and convert to bounding box
 2. **Basemap Download**: Download basemap tiles from ESRI World Imagery
 3. **Preprocessing**: 
    - Load source orthomosaic
-   - Create resolution pyramid at multiple scales (0.125, 0.25, 0.5)
+   - Create resolution pyramid and target overlap images at multiple scales (0.125, 0.25, 0.5)
    - Compute overlap regions
-4. **Feature Matching**: 
+4. **Iterative Upsample Registration**:
+   - **Scale 0.125**: Create downsampled orthomosaic, match features, compute transformation, apply transformation
+   - **Upsample**: Upsample the transformed low-resolution version to scale 0.25
+   - **Scale 0.25**: Match features between upsampled source and target, compute transformation, apply transformation
+   - **Upsample**: Upsample the transformed version to scale 0.5
+   - **Scale 0.5**: Match features, compute transformation (affine), apply transformation
+   - **Final Output**: Apply cumulative transformations to full-resolution orthomosaic (done separately)
+5. **Feature Matching**: 
    - Match features using LightGlue at each scale
-   - Visualize matches
-5. **Transformation Computation**: 
-   - Compute transformations (shift for coarse scales, homography for fine scales)
+   - Visualize matches and keypoints
+6. **Transformation Computation**: 
+   - Compute transformations (shift for coarse scales, affine for fine scales)
    - Remove outliers using RANSAC
-6. **Full Pipeline**: Run the complete hierarchical registration
-7. **Visualization**: Display results, error histograms, and final registered orthomosaic
+   - Store transformations in meters for cumulative application
+7. **Visualization**: Display results, error histograms, and intermediate transformed images
 
 ## Output Structure
 
