@@ -156,3 +156,5 @@ class TestOutlierRemoval:
         assert len(filtered_src) == len(src_points)
         assert len(filtered_tgt) == len(tgt_points)
 
+
+

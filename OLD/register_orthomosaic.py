@@ -5,8 +5,7 @@ Hierarchical registration using resolution pyramid with cumulative transformatio
 
 Default scales: [0.125, 0.25, 0.5]
 Default matcher: LightGlue
-Default transforms: shift (0.125, 0.25), affine (0.5)
-Default output directory: outputs/
+Default transforms: shift (0.125, 0.25, 0.5)
 """
 
 import numpy as np
@@ -97,10 +96,10 @@ class OrthomosaicRegistration:
     """Main registration class for hierarchical orthomosaic alignment."""
     
     def __init__(self, source_path: str, target_path: str, output_dir: str,
-            scales: Optional[List[float]] = None,
-            matcher: str = 'lightglue',
-            transform_types: Optional[Dict[float, str]] = None,
-            debug_level: str = 'none',
+                 scales: Optional[List[float]] = None,
+                 matcher: str = 'lightglue',
+                 transform_types: Optional[Dict[float, str]] = None,
+                 debug_level: str = 'none',
                  gcp_evaluation_path: Optional[str] = None):
         """
         Initialize registration.
@@ -109,7 +108,7 @@ class OrthomosaicRegistration:
             source_path: Path to source orthomosaic
             target_path: Path to target basemap
             output_dir: Output directory
-            scales: List of scales (default: [0.25, 0.5, 1.0])
+            scales: List of scales (default: [0.125, 0.25, 0.5])
             matcher: Matching method ('lightglue', 'sift', 'orb', 'patch_ncc')
             transform_types: Dict mapping scale to transform type (default: shift for all scales)
             debug_level: Debug level ('none', 'intermediate', 'high')
@@ -131,16 +130,28 @@ class OrthomosaicRegistration:
         else:
             logging.info(f"Logging to: {self.log_file}")
         
-        # Create subdirectories - always create preprocessing for upsample variant
-        self.preprocessing_dir = self.output_dir / 'preprocessing'
-        self.matching_dir = self.output_dir / 'matching_and_transformations'
-        self.intermediate_dir = self.output_dir / 'intermediate'
+        # Create subdirectories conditionally based on debug level
+        self.preprocessing_dir = None
+        self.matching_dir = None
+        self.intermediate_dir = None
         self._temp_intermediate_dir = None
         
-        # Always create these directories for upsample variant
-        self.preprocessing_dir.mkdir(parents=True, exist_ok=True)
-        self.matching_dir.mkdir(parents=True, exist_ok=True)
-        self.intermediate_dir.mkdir(parents=True, exist_ok=True)
+        # Always need intermediate_dir for processing, but use temp location at 'none' level
+        if debug_level in ['intermediate', 'high']:
+            self.intermediate_dir = self.output_dir / 'intermediate'
+            self.intermediate_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # At 'none' level, use temp directory (will be cleaned up)
+            import tempfile
+            self._temp_intermediate_dir = Path(tempfile.mkdtemp(prefix='ortho_reg_'))
+            self.intermediate_dir = self._temp_intermediate_dir
+        
+        # Only 'high' level creates matching_and_transformations/ directory
+        if debug_level == 'high':
+            self.preprocessing_dir = self.output_dir / 'preprocessing'
+            self.matching_dir = self.output_dir / 'matching_and_transformations'
+            self.preprocessing_dir.mkdir(parents=True, exist_ok=True)
+            self.matching_dir.mkdir(parents=True, exist_ok=True)
         
         # Use defaults from constants module
         self.scales = scales if scales is not None else DEFAULT_SCALES.copy()
@@ -237,314 +248,47 @@ class OrthomosaicRegistration:
                 source_img, target_img, overlap_info
             )
             
-            # Always save target_overlap images to preprocessing/ for upsample variant
-            target_overlap_path = self.preprocessing_dir / f'target_overlap_scale{scale:.3f}.png'
+            # Always save overlap images (needed for matching), but use temp location if not 'high' level
+            if self.debug_level == 'high' and self.preprocessing_dir:
+                overlap_dir = self.preprocessing_dir
+            else:
+                # Use intermediate_dir (which exists as temp at 'none' level)
+                overlap_dir = self.intermediate_dir
             
+            source_overlap_path = overlap_dir / f'source_overlap_scale{scale:.3f}.png'
+            target_overlap_path = overlap_dir / f'target_overlap_scale{scale:.3f}.png'
+            
+            if not source_overlap_path.exists():
+                cv2.imwrite(str(source_overlap_path), source_overlap)
             if not target_overlap_path.exists():
                 cv2.imwrite(str(target_overlap_path), target_overlap)
-                logging.info(f"  Saved target overlap image for scale {scale:.3f}")
+            
+            if self.debug_level == 'high':
+                logging.info(f"  Saved overlap images for scale {scale:.3f}")
     
     def register(self) -> Optional[Path]:
         """
-        Run upsample registration pipeline:
-        1. Create target_overlap images in preprocessing/
-        2. Create downsampled orthomosaic at lowest scale as temp.png and scale{scale}_original.tif
-        3. For each scale: match, transform, upsample
-        4. Apply cumulative transformation to original input
+        Run hierarchical registration pipeline following explicit steps (a)-(g).
         """
         logging.info("\n" + "=" * 80)
-        logging.info("UPSAMPLE ORTHOMOSAIC REGISTRATION")
+        logging.info("HIERARCHICAL ORTHOMOSAIC REGISTRATION")
         logging.info("=" * 80)
         
-        # Step 1: Create resolution pyramid and save target_overlap images to preprocessing/
+        # Clean up old intermediate files that shouldn't exist for current scales
+        import re
+        for old_file in self.intermediate_dir.glob('*.aux.xml'):
+            # Extract scale from filename
+            match = re.search(r'scale([\d.]+)', old_file.stem)
+            if match:
+                file_scale = float(match.group(1))
+                if file_scale not in self.scales and file_scale != 1.0:
+                    old_file.unlink()
+                    logging.debug(f"Removed old intermediate file: {old_file.name}")
+        
+        # Step 1: Create resolution pyramid (only loads downsampled versions, not full res)
         self.create_resolution_pyramid()
         
-        # Sort scales to process from lowest to highest
-        sorted_scales = sorted(self.scales)
-        if len(sorted_scales) == 0:
-            logging.error("No scales provided")
-            return None
-        
-        lowest_scale = sorted_scales[0]
-        
-        # Helper to convert TIF to grayscale PNG
-        def tif_to_grayscale_png(tif_path: Path, png_path: Path) -> bool:
-            """Convert TIF to grayscale PNG for matching."""
-            try:
-                with rasterio.open(tif_path) as src:
-                    if src.count >= 3:
-                        data = src.read([1, 2, 3])
-                        rgb = np.moveaxis(data, 0, -1)
-                        rgb_min, rgb_max = rgb.min(), rgb.max()
-                        if rgb_max > rgb_min:
-                            rgb_norm = ((rgb - rgb_min) / (rgb_max - rgb_min) * 255).astype(np.uint8)
-                        else:
-                            rgb_norm = np.zeros_like(rgb, dtype=np.uint8)
-                        gray = cv2.cvtColor(rgb_norm, cv2.COLOR_RGB2GRAY)
-                    else:
-                        data = src.read(1)
-                        dmin, dmax = data.min(), data.max()
-                        if dmax > dmin:
-                            gray = ((data - dmin) / (dmax - dmin) * 255).astype(np.uint8)
-                        else:
-                            gray = np.zeros_like(data, dtype=np.uint8)
-                
-                # Use PIL for large images to avoid OpenCV limits
-                from PIL import Image
-                img = Image.fromarray(gray, mode='L')
-                img.save(str(png_path), 'PNG', compress_level=1)
-                return True
-            except Exception as e:
-                logging.error(f"Failed to convert TIF to PNG: {e}")
-                return False
-        
-        # Step 2: Create downsampled orthomosaic at lowest scale as temp.png and scale{scale}_original.tif
-        logging.info(f"\n{'='*80}")
-        logging.info(f"Step 2: Creating downsampled orthomosaic at scale {lowest_scale:.3f}")
-        logging.info(f"{'='*80}")
-        
-        temp_png_path = self.intermediate_dir / 'temp.png'
-        original_tif_path = self.intermediate_dir / f'scale{lowest_scale:.3f}_original.tif'
-        
-        # Create downsampled orthomosaic
-        downsampled_ortho = self._get_or_create_downsampled_orthomosaic(lowest_scale)
-        if downsampled_ortho is None:
-            logging.error("Failed to create downsampled orthomosaic")
-            return None
-        
-        # Copy to original_tif_path
-        import shutil
-        shutil.copy(downsampled_ortho, original_tif_path)
-        logging.info(f"  Created: {original_tif_path.name}")
-        
-        # Convert to PNG for temp.png
-        if not tif_to_grayscale_png(original_tif_path, temp_png_path):
-            return None
-        logging.info(f"  Created: {temp_png_path.name}")
-        
-        # Store all transforms for cumulative application
-        all_transforms = []
-        
-        # Step 3: Process each scale
-        current_tif_path = original_tif_path
-        for i, scale in enumerate(sorted_scales):
-            logging.info(f"\n{'='*80}")
-            logging.info(f"Step 3.{i+1}: Processing scale {scale:.3f} ({i+1}/{len(sorted_scales)})")
-            logging.info(f"{'='*80}")
-            
-            # Get target overlap image
-            target_overlap_path = self.preprocessing_dir / f'target_overlap_scale{scale:.3f}.png'
-            if not target_overlap_path.exists():
-                logging.error(f"Target overlap image not found: {target_overlap_path}")
-                return None
-            
-            # Match temp.png with target_overlap_scale{scale}.png
-            logging.info(f"  Matching temp.png with target_overlap_scale{scale:.3f}.png...")
-            
-            # Read images
-            source_img = cv2.imread(str(temp_png_path), cv2.IMREAD_GRAYSCALE)
-            if source_img is None:
-                # Fallback to PIL if OpenCV fails
-                from PIL import Image
-                img = Image.open(temp_png_path).convert('L')
-                source_img = np.array(img, dtype=np.uint8)
-            
-            target_img = cv2.imread(str(target_overlap_path), cv2.IMREAD_GRAYSCALE)
-            if target_img is None:
-                from PIL import Image
-                img = Image.open(target_overlap_path).convert('L')
-                target_img = np.array(img, dtype=np.uint8)
-            
-            if source_img is None or target_img is None:
-                logging.error(f"Failed to read images for matching at scale {scale:.3f}")
-                return None
-            
-            source_mask = create_mask(source_img)
-            target_mask = create_mask(target_img)
-            
-            # Compute matches
-            matches_result = self._compute_matches(source_img, target_img, source_mask, target_mask, scale)
-            if not matches_result or 'matches' not in matches_result or len(matches_result['matches']) == 0:
-                logging.error(f"No matches found at scale {scale:.3f}")
-                return None
-            
-            # Save matches JSON
-            matches_json = self.matching_dir / f'matches_scale{scale:.3f}.json'
-            self._save_matches_json(matches_result, matches_json, scale,
-                                   source_image='temp.png',
-                                   target_image=target_overlap_path.name)
-            logging.info(f"  Created: {matches_json.name}")
-            
-            # Create visualizations (this also creates lightglue_keypoints_scale{scale}.png)
-            matches_viz_path = self.matching_dir / f'matches_scale{scale:.3f}.png'
-            matches_result['scale'] = scale
-            visualize_matches(
-                source_img, target_img, matches_result, matches_viz_path,
-                source_name='temp.png', target_name=target_overlap_path.name,
-                skip_json=True
-            )
-            logging.info(f"  Created: {matches_viz_path.name}")
-            logging.info(f"  Created: lightglue_keypoints_scale{scale:.3f}.png")
-            
-            # Load matches for transformation
-            src_pts, dst_pts = load_matches(matches_json)
-            src_pts_clean, dst_pts_clean, _ = remove_gross_outliers(src_pts, dst_pts)
-            
-            # Compute shift transformation
-            transform_type = self.transform_types.get(scale, 'shift')
-            transform_result = self._compute_transformation(src_pts_clean, dst_pts_clean, transform_type, scale)
-            
-            # Save transform JSON
-            transform_json = self.matching_dir / f'transform_scale{scale:.3f}.json'
-            self._save_transform_json(transform_result, transform_json, scale)
-            logging.info(f"  Created: {transform_json.name}")
-            
-            # Create error histogram
-            inlier_mask = transform_result.get('inliers')
-            if inlier_mask is not None:
-                inlier_mask = np.array(inlier_mask, dtype=bool)
-                if len(inlier_mask) != len(src_pts_clean):
-                    inlier_mask = np.ones(len(src_pts_clean), dtype=bool)
-            else:
-                inlier_mask = np.ones(len(src_pts_clean), dtype=bool)
-            
-            self._create_error_histogram(
-                transform_result, scale,
-                src_pts=src_pts_clean, dst_pts=dst_pts_clean,
-                inlier_mask=inlier_mask,
-                json_name=transform_json.name,
-                matches_path=matches_json
-            )
-            logging.info(f"  Created: error_histogram_scale{scale:.3f}.png")
-            
-            # Store transform for cumulative application
-            all_transforms.append((scale, transform_result))
-            
-            # Apply transformation to current TIF file and save as scale{scale}_after_{transform_type}.tif
-            transform_type = self.transform_types.get(scale, 'shift')
-            logging.info(f"  Applying transformation to {current_tif_path.name}...")
-            after_transform_tif = self.intermediate_dir / f'scale{scale:.3f}_after_{transform_type}.tif'
-            
-            # Apply transformation using existing method
-            transformed_tif = self._apply_transform_to_orthomosaic(
-                current_tif_path, transform_result, scale, scale,
-                output_filename=after_transform_tif.name
-            )
-            
-            if transformed_tif is None:
-                logging.error(f"Failed to apply transformation at scale {scale:.3f}")
-                return None
-            
-            # Move to correct location if needed
-            if transformed_tif != after_transform_tif:
-                shutil.move(transformed_tif, after_transform_tif)
-            
-            logging.info(f"  Created: {after_transform_tif.name}")
-            
-            # Update temp.png from the transformed TIF
-            if not tif_to_grayscale_png(after_transform_tif, temp_png_path):
-                return None
-            
-            # If not last scale, upsample the TIF to next scale
-            if i < len(sorted_scales) - 1:
-                next_scale = sorted_scales[i + 1]
-                scale_factor = next_scale / scale
-                
-                logging.info(f"  Upsampling from scale {scale:.3f} to {next_scale:.3f} (factor: {scale_factor:.3f})...")
-                
-                # Upsample the TIF file
-                next_original_tif = self.intermediate_dir / f'scale{next_scale:.3f}_original.tif'
-                
-                with rasterio.open(after_transform_tif) as src:
-                    new_height = int(src.height * scale_factor)
-                    new_width = int(src.width * scale_factor)
-                    
-                    # Calculate new transform
-                    new_transform = rasterio.Affine(
-                        src.transform.a / scale_factor,
-                        src.transform.b,
-                        src.transform.c,
-                        src.transform.d,
-                        src.transform.e / scale_factor,
-                        src.transform.f
-                    )
-                    
-                    # Read and upsample each band
-                    output_data = []
-                    for band_idx in range(1, min(src.count + 1, 4)):
-                        band_data = src.read(
-                            band_idx,
-                            out_shape=(new_height, new_width),
-                            resampling=Resampling.bilinear
-                        )
-                        # Normalize to uint8 if needed
-                        if band_data.dtype != np.uint8:
-                            dmin, dmax = band_data.min(), band_data.max()
-                            if dmax > dmin:
-                                band_data = ((band_data - dmin) / (dmax - dmin) * 255).astype(np.uint8)
-                            else:
-                                band_data = np.zeros_like(band_data, dtype=np.uint8)
-                        output_data.append(band_data)
-                    
-                    # Ensure 3 bands
-                    if len(output_data) == 1:
-                        output_data = [output_data[0], output_data[0], output_data[0]]
-                    elif len(output_data) == 2:
-                        output_data.append(output_data[1])
-                    
-                    # Save upsampled TIF
-                    output_array = np.stack(output_data[:3], axis=0).astype(np.uint8)
-                    with rasterio.open(
-                        next_original_tif,
-                        'w',
-                        driver='GTiff',
-                        height=new_height,
-                        width=new_width,
-                        count=3,
-                        dtype=np.uint8,
-                        crs=src.crs,
-                        transform=new_transform,
-                        compress='JPEG',
-                        jpeg_quality=90,
-                        photometric='RGB',
-                        tiled=True,
-                        blockxsize=512,
-                        blockysize=512
-                    ) as dst:
-                        for band_idx in range(1, 4):
-                            dst.write(output_array[band_idx - 1], band_idx)
-                
-                logging.info(f"  Created: {next_original_tif.name}")
-                current_tif_path = next_original_tif
-                
-                # Update temp.png from the upsampled TIF
-                if not tif_to_grayscale_png(next_original_tif, temp_png_path):
-                    return None
-        
-        # Step 4: Skip final transformation application
-        # All transformations, intermediate images, and visualizations have been computed.
-        # The final registered orthomosaic will be created separately.
-        logging.info(f"\n{'='*80}")
-        logging.info("Step 4: Skipping final transformation application")
-        logging.info(f"{'='*80}")
-        logging.info("  All transformations have been computed and saved:")
-        for scale, transform_result in all_transforms:
-            transform_type = transform_result.get('type', 'unknown')
-            transform_json = self.matching_dir / f'transform_scale{scale:.3f}.json'
-            logging.info(f"    Scale {scale:.3f}: {transform_type} -> {transform_json.name}")
-        
-        logging.info(f"\n  Intermediate files created:")
-        for scale, transform_result in all_transforms:
-            transform_type = transform_result.get('type', 'unknown')
-            logging.info(f"    - Original TIF: scale{scale:.3f}_original.tif")
-            logging.info(f"    - Transformed TIF: scale{scale:.3f}_after_{transform_type}.tif")
-            logging.info(f"    - Matches JSON: matches_scale{scale:.3f}.json")
-            logging.info(f"    - Transform JSON: transform_scale{scale:.3f}.json")
-            logging.info(f"    - Visualizations: matches_scale{scale:.3f}.png, error_histogram_scale{scale:.3f}.png")
-        logging.info(f"\n  Final registered orthomosaic will be created separately.")
-        
-        # Return None to indicate no final output was created
-        return None
+        # Base orthos - create lazily when needed (don't create scale 1.0 until actually needed)
         base_orthos = {}
         
         def get_base_ortho(scale: float) -> Path:
@@ -679,7 +423,7 @@ class OrthomosaicRegistration:
                               output_basename: str) -> Tuple[Optional[Path], Optional[Path]]:
             # Always save transformed orthomosaic (needed for processing pipeline)
             # At 'none' level, it goes to temp directory which gets cleaned up
-            # Extract TIF filename from output_basename (e.g., "orthomosaic_scale0.250_shift0.250.png" -> "orthomosaic_scale0.250_shift0.250.tif")
+            # Extract TIF filename from output_basename (e.g., "orthomosaic_scale0.250_shift0.125.png" -> "orthomosaic_scale0.250_shift0.125.tif")
             if output_basename.endswith('.png'):
                 tif_filename = output_basename[:-4] + '.tif'
             else:
@@ -698,9 +442,9 @@ class OrthomosaicRegistration:
             )
             return transformed_path, overlap_png
         
-        # a) First scale (from self.scales)
-        scale_a = self.scales[0]
-        t_type_a = self.transform_types.get(scale_a, 'shift')
+        # a) scale 0.125 shift
+        scale_a = 0.125
+        t_type_a = 'shift'
         # Use intermediate_dir for overlap images (works for all debug levels)
         overlap_dir = self.preprocessing_dir if (self.debug_level == 'high' and self.preprocessing_dir) else self.intermediate_dir
         source_overlap_a = overlap_dir / f'source_overlap_scale{scale_a:.3f}.png'
@@ -717,40 +461,31 @@ class OrthomosaicRegistration:
             output_basename=f'orthomosaic_scale{scale_a:.3f}_shift.png'
         )
         
-        # b) apply transform from first scale to second scale
-        if len(self.scales) < 2:
-            # Only one scale, use it as final
-            if ortho_a_shift and ortho_a_shift.exists():
-                import shutil
-                final_output = self.output_dir / 'orthomosaic_registered.tif'
-                shutil.copy(ortho_a_shift, final_output)
-                logging.info(f"Final output: {final_output}")
-                return final_output
-            return None
-        
-        scale_b = self.scales[1]
+        # b) apply transform_scale0.125 to scale 0.25 -> shift0.125
+        scale_b = 0.25
         ortho_b_base = get_base_ortho(scale_b)
-        ortho_b_shift_a, overlap_b_shift_a_png = apply_and_overlap(
+        ortho_b_shift0125, overlap_b_shift0125_png = apply_and_overlap(
             ortho_b_base, transform_a, scale_a, scale_b,
-            output_basename=f'orthomosaic_scale{scale_b:.3f}_shift{scale_a:.3f}.png'
+            output_basename=f'orthomosaic_scale{scale_b:.3f}_shift0.125.png'
         )
-        if ortho_b_shift_a is None:
+        if ortho_b_shift0125 is None:
             return None
         
-        # c) matches at second scale using shifted source -> use transform type from config
+        # c) matches at 0.25 using shifted source -> use transform type from config
         transform_type_b = self.transform_types.get(scale_b, 'shift')
         transform_b, _ = run_matching(
-            overlap_b_shift_a_png, overlap_dir / f'target_overlap_scale{scale_b:.3f}.png',
+            overlap_b_shift0125_png, overlap_dir / f'target_overlap_scale{scale_b:.3f}.png',
             scale_b, transform_type_b, transform_json_name=f'transform_scale{scale_b:.3f}.json'
         )
         if transform_b is None:
             return None
-        ortho_b_shift_b, overlap_b_shift_b_png = apply_and_overlap(
-            ortho_b_shift_a, transform_b, scale_b, scale_b,
-            output_basename=f'orthomosaic_scale{scale_b:.3f}_shift{scale_b:.3f}.png'
+        ortho_b_shift0250, overlap_b_shift0250_png = apply_and_overlap(
+            ortho_b_shift0125, transform_b, scale_b, scale_b,
+            output_basename=f'orthomosaic_scale{scale_b:.3f}_shift0.250.png'
         )
         
         # Run GCP evaluation at second-to-last scale if requested
+        # For scales [0.125, 0.25], we want to evaluate at 0.25 (the highest scale before 1.0)
         if self.gcp_evaluation_path and len(self.scales) >= 2:
             # Get the highest scale in the list (which is the second-to-last overall, since 1.0 is always final)
             highest_scale = max(self.scales)
@@ -764,7 +499,7 @@ class OrthomosaicRegistration:
                     # Create patches like gcp_analysis does
                     gcp_evaluation_output_dir = self.output_dir / 'gcp_analysis'
                     analyze_gcps(
-                        registered_orthomosaic_path=str(ortho_b_shift_b),
+                        registered_orthomosaic_path=str(ortho_b_shift0250),
                         gcp_file_path=self.gcp_evaluation_path,
                         output_dir=str(gcp_evaluation_output_dir),
                         patch_size=300
@@ -775,38 +510,37 @@ class OrthomosaicRegistration:
                     import traceback
                     traceback.print_exc()
         
-        # d) apply transform from second scale to third scale (if third scale exists and is not 1.0)
+        # d) apply transform_scale0.250 to scale 0.5 -> shift0.250 (if 0.5 is in scales)
+        scale_c = 0.5
         transform_c = transform_b  # Default: use transform_b if scale_c is skipped
-        ortho_c_final = ortho_b_shift_b  # Default: use previous ortho if scale_c is skipped
+        ortho_c_shift0500 = ortho_b_shift0250  # Default: use previous ortho if scale_c is skipped
         
-        if len(self.scales) >= 3:
-            scale_c = self.scales[2]
-            # Only process if scale_c is not 1.0 (1.0 is handled separately)
-            if scale_c != 1.0:
-                ortho_c_base = get_base_ortho(scale_c)
-                ortho_c_shift_b, overlap_c_shift_b_png = apply_and_overlap(
-                    ortho_c_base, transform_b, scale_b, scale_c,
-                    output_basename=f'orthomosaic_scale{scale_c:.3f}_shift{scale_b:.3f}.png'
-                )
-                if ortho_c_shift_b is None:
-                    return None
-                
-                # e) matches at third scale using shifted source -> use transform type from config
-                transform_type_c = self.transform_types.get(scale_c, 'shift')
-                transform_c, _ = run_matching(
-                    overlap_c_shift_b_png, overlap_dir / f'target_overlap_scale{scale_c:.3f}.png',
-                    scale_c, transform_type_c, transform_json_name=f'transform_scale{scale_c:.3f}.json'
-                )
-                if transform_c is None:
-                    return None
-                # Use transform type in filename for clarity
-                transform_type_c = self.transform_types.get(scale_c, 'shift')
-                ortho_c_final, overlap_c_final_png = apply_and_overlap(
-                    ortho_c_shift_b, transform_c, scale_c, scale_c,
-                    output_basename=f'orthomosaic_scale{scale_c:.3f}_{transform_type_c}.png'
-                )
-                
-                # Run GCP evaluation at second-to-last scale if requested
+        if scale_c in self.scales:
+            ortho_c_base = get_base_ortho(scale_c)
+            ortho_c_shift0250, overlap_c_shift0250_png = apply_and_overlap(
+                ortho_c_base, transform_b, scale_b, scale_c,
+                output_basename=f'orthomosaic_scale{scale_c:.3f}_shift0.250.png'
+            )
+            if ortho_c_shift0250 is None:
+                return None
+            
+            # e) matches at 0.5 using shifted source -> use transform type from config
+            transform_type_c = self.transform_types.get(scale_c, 'homography')
+            transform_c, _ = run_matching(
+                overlap_c_shift0250_png, overlap_dir / f'target_overlap_scale{scale_c:.3f}.png',
+                scale_c, transform_type_c, transform_json_name=f'transform_scale{scale_c:.3f}.json'
+            )
+            if transform_c is None:
+                return None
+            # Use transform type in filename for clarity
+            transform_type_c = self.transform_types.get(scale_c, 'homography')
+            ortho_c_shift0500, overlap_c_shift0500_png = apply_and_overlap(
+                ortho_c_shift0250, transform_c, scale_c, scale_c,
+                output_basename=f'orthomosaic_scale{scale_c:.3f}_{transform_type_c}.png'
+            )
+            
+            # Run GCP evaluation at second-to-last scale if requested
+            # For scales [0.125, 0.25, 0.5], we want to evaluate at 0.5 (the highest scale before 1.0)
             if self.gcp_evaluation_path and len(self.scales) >= 2:
                 # Get the highest scale in the list (which is the second-to-last overall, since 1.0 is always final)
                 highest_scale = max(self.scales)
@@ -820,7 +554,7 @@ class OrthomosaicRegistration:
                         # Create patches like gcp_analysis does
                         gcp_evaluation_output_dir = self.output_dir / 'gcp_analysis'
                         analyze_gcps(
-                            registered_orthomosaic_path=str(ortho_c_final),
+                            registered_orthomosaic_path=str(ortho_c_shift0500),
                             gcp_file_path=self.gcp_evaluation_path,
                             output_dir=str(gcp_evaluation_output_dir),
                             patch_size=300
@@ -838,15 +572,10 @@ class OrthomosaicRegistration:
         if scale_d in self.scales:
             # If 1.0 is in scales, process it normally (compute matches and transform at 1.0)
             ortho_d_base = get_base_ortho(scale_d)
-            # Use transform_c (which may be transform_b if scale_c was skipped or doesn't exist)
-            if len(self.scales) >= 3 and self.scales[2] != 1.0:
-                prev_scale = self.scales[2]
-                prev_transform = transform_c
-            else:
-                prev_scale = scale_b
-                prev_transform = transform_b
+            # Use transform_c (which may be transform_b if scale_c was skipped)
+            prev_scale = scale_c if scale_c in self.scales else scale_b
             ortho_d_shift_prev, overlap_d_shift_prev_png = apply_and_overlap(
-                ortho_d_base, prev_transform, prev_scale, scale_d,
+                ortho_d_base, transform_c, prev_scale, scale_d,
                 output_basename=f'orthomosaic_scale{scale_d:.3f}_shift{prev_scale:.3f}.png'
             )
             if ortho_d_shift_prev is None:
@@ -896,18 +625,15 @@ class OrthomosaicRegistration:
             
             # Apply transforms cumulatively, starting from the base orthomosaic
             current_ortho = ortho_fullres
-            # Build a dict of transforms by scale
-            transforms_by_scale = {scale_b: transform_b}
-            if len(self.scales) >= 3 and self.scales[2] != 1.0:
-                transforms_by_scale[self.scales[2]] = transform_c
-            
             for scale in sorted(self.scales):
-                if scale == 1.0:
-                    continue  # Skip 1.0, we're applying to it
-                if scale not in transforms_by_scale:
+                # Get transform for this scale
+                if scale == scale_b:
+                    current_transform = transform_b
+                elif scale == scale_c and scale_c in self.scales:
+                    current_transform = transform_c
+                else:
                     continue
                 
-                current_transform = transforms_by_scale[scale]
                 logging.info(f"Applying transform from scale {scale:.3f} to full resolution")
                 current_ortho = self._apply_transform_to_orthomosaic(
                     current_ortho, current_transform, scale, scale_d
@@ -1044,8 +770,8 @@ class OrthomosaicRegistration:
         3. Save with the current transform type in the filename
         
         The key is that transformations are CUMULATIVE:
-        - At first scale: apply shift_1 to original -> orthomosaic_scale{first}_shift.tif
-        - At second scale: apply shift_2 to orthomosaic_scale{second}_shift.tif (from first) -> orthomosaic_scale{second}_shift.tif (overwrites with cumulative)
+        - At 0.125: apply shift_1 to original -> orthomosaic_scale0.125_shift.tif
+        - At 0.25: apply shift_2 to orthomosaic_scale0.250_shift.tif (from 0.125) -> orthomosaic_scale0.250_shift.tif (overwrites with cumulative)
         - At 0.5: apply homography to orthomosaic_scale0.500_shift.tif (from 0.25) -> orthomosaic_scale0.500_homography.tif
         
         Args:
@@ -1065,7 +791,7 @@ class OrthomosaicRegistration:
             target_scale = self.scales[i]
             
             # Determine input orthomosaic path
-            # For the first scale, use original downsampled orthomosaic
+            # For the first scale (0.125), use original downsampled orthomosaic
             # For subsequent scales, use the orthomosaic from the PREVIOUS scale's transformation
             if i == 0:
                 # First scale: use original downsampled orthomosaic
@@ -2373,7 +2099,6 @@ def main():
     
     result = registration.register()
     
-    # Note: register() may return None when final output is skipped (as per upsample variant design)
     if result:
         print(f"\n✓ Registration complete: {result}")
         
@@ -2399,10 +2124,6 @@ def main():
                 import traceback
                 traceback.print_exc()
                 # Don't fail the entire registration if GCP analysis fails
-    elif result is None:
-        # Registration completed successfully but no final output was created (upsample variant)
-        print(f"\n✓ Registration pipeline complete (all transformations and intermediate files created)")
-        print(f"  Final registered orthomosaic will be created separately.")
     else:
         print("\n✗ Registration failed")
         return 1

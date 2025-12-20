@@ -94,3 +94,5 @@ class TestGCPLoading:
         with pytest.raises(FileNotFoundError):
             load_gcps_from_file(str(missing_path))
 
+
+
