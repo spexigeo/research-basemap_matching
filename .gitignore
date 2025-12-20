@@ -60,6 +60,9 @@ Thumbs.db
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
 
+# Auto-saved notebooks (Jupyter/Colab auto-saves on execution)
+notebooks/registration_demo_colab.ipynb
+
 # pytest
 .pytest_cache/
 .coverage
@@ -69,4 +72,7 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+
+
 
