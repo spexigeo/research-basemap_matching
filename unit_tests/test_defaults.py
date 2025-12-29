@@ -43,7 +43,7 @@ class TestDefaults:
         
         # Valid algorithm names
         valid_algorithms = ['shift', 'similarity', 'affine', 'homography', 
-                          'polynomial_2', 'polynomial_3', 'spline', 'rubber_sheeting']
+                          'polynomial_2', 'polynomial_3', 'spline']
         
         for algo in DEFAULT_ALGORITHMS:
             assert algo in valid_algorithms
@@ -71,6 +71,7 @@ class TestDefaults:
         assert DEFAULT_OUTPUT_DIR is not None
         assert isinstance(DEFAULT_OUTPUT_DIR, str)
         assert len(DEFAULT_OUTPUT_DIR) > 0
+
 
 
 

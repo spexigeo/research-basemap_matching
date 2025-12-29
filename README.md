@@ -118,7 +118,6 @@ python register_orthomosaic.py \
 - **polynomial_2**: 2nd order polynomial (12 parameters) - Handles local distortions
 - **polynomial_3**: 3rd order polynomial (20 parameters) - More flexible, slower
 - **spline**: Thin-plate spline - Handles complex local distortions
-- **rubber_sheeting**: Piecewise affine - Good for local corrections
 
 **Default Strategy**: Use `shift` for all scales (0.125, 0.25, 0.5)
 

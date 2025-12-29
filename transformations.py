@@ -1,7 +1,7 @@
 """
 Transformations module for orthomosaic registration.
 Provides transformation computation and application: shift, similarity, affine, homography,
-polynomial (2nd and 3rd order), spline, and rubber sheeting.
+polynomial (2nd and 3rd order), and spline.
 """
 
 import cv2
@@ -539,104 +539,13 @@ def compute_spline_transform(src_pts: np.ndarray, dst_pts: np.ndarray,
     }
 
 
-def compute_rubber_sheeting_transform(src_pts: np.ndarray, dst_pts: np.ndarray,
-                                      ransac_threshold: float = 5.0) -> Dict:
-    """Compute rubber sheeting transformation using Delaunay triangulation."""
-    if not SCIPY_AVAILABLE:
-        return {'type': 'rubber_sheeting', 'matrix': None, 'error': 'scipy_not_available'}
-    
-    if len(src_pts) < 3:
-        return {'type': 'rubber_sheeting', 'matrix': None, 'error': 'insufficient_points'}
-    
-    # Use RANSAC to find inliers first
-    M_affine, inliers_affine = cv2.estimateAffine2D(
-        src_pts, dst_pts,
-        method=cv2.RANSAC,
-        ransacReprojThreshold=ransac_threshold * 2,
-        maxIters=2000,
-        confidence=0.99
-    )
-    
-    if M_affine is None:
-        return {'type': 'rubber_sheeting', 'matrix': None, 'error': 'ransac_failed'}
-    
-    inlier_mask = inliers_affine.ravel() > 0 if inliers_affine is not None else np.ones(len(src_pts), dtype=bool)
-    src_inliers = src_pts[inlier_mask]
-    dst_inliers = dst_pts[inlier_mask]
-    
-    if len(src_inliers) < 3:
-        return {'type': 'rubber_sheeting', 'matrix': None, 'error': 'insufficient_inliers'}
-    
-    # Rubber sheeting uses piecewise affine transformations on Delaunay triangles
-    try:
-        from scipy.spatial import Delaunay
-        from scipy.interpolate import griddata
-        
-        # Build Delaunay triangulation on source points
-        tri = Delaunay(src_inliers)
-        
-        # For evaluation, use griddata for interpolation
-        # Use 'nearest' as fallback for points outside convex hull to avoid NaN
-        dst_predicted_x = griddata(src_inliers, dst_inliers[:, 0], src_pts, method='linear', fill_value=np.nan)
-        dst_predicted_y = griddata(src_inliers, dst_inliers[:, 1], src_pts, method='linear', fill_value=np.nan)
-        
-        # Handle NaN values (points outside convex hull) - use nearest neighbor for these
-        nan_mask = np.isnan(dst_predicted_x) | np.isnan(dst_predicted_y)
-        if np.any(nan_mask):
-            # For points outside convex hull, use nearest neighbor interpolation
-            dst_predicted_x_nn = griddata(src_inliers, dst_inliers[:, 0], src_pts[nan_mask], method='nearest')
-            dst_predicted_y_nn = griddata(src_inliers, dst_inliers[:, 1], src_pts[nan_mask], method='nearest')
-            dst_predicted_x[nan_mask] = dst_predicted_x_nn
-            dst_predicted_y[nan_mask] = dst_predicted_y_nn
-        
-        valid = ~(np.isnan(dst_predicted_x) | np.isnan(dst_predicted_y) | 
-                 np.isinf(dst_predicted_x) | np.isinf(dst_predicted_y))
-        if np.sum(valid) == 0:
-            return {'type': 'rubber_sheeting', 'matrix': None, 'error': 'no_valid_predictions'}
-        
-        dst_predicted = np.column_stack([dst_predicted_x, dst_predicted_y])
-        reproj_errors = np.linalg.norm(dst_pts - dst_predicted, axis=1)
-        
-        # Clip extreme errors to reasonable maximum
-        # Use percentile-based clipping to handle outliers (points outside convex hull)
-        if np.sum(valid) > 0:
-            p99 = np.percentile(reproj_errors[valid], 99)
-            max_reasonable_error = max(p99 * 5, 100.0)  # At least 100 pixels, or 5x the 99th percentile
-            reproj_errors = np.clip(reproj_errors, 0, max_reasonable_error)
-        
-    except Exception as e:
-        return {'type': 'rubber_sheeting', 'matrix': None, 'error': f'computation_failed: {str(e)}'}
-    
-    inlier_errors = reproj_errors[inlier_mask & valid] if np.any(inlier_mask & valid) else reproj_errors[valid]
-    
-    # Robust statistics
-    median_error = np.median(inlier_errors) if len(inlier_errors) > 0 else np.median(reproj_errors[valid])
-    mad = np.median(np.abs(inlier_errors - median_error)) if len(inlier_errors) > 0 else np.median(np.abs(reproj_errors[valid] - median_error))
-    robust_rmse = median_error + 1.4826 * mad
-    
-    inlier_count = int(np.sum(inlier_mask))
-    
-    return {
-        'type': 'rubber_sheeting',
-        'matrix': None,
-        'control_points_src': [[float(x), float(y)] for x, y in src_inliers.tolist()],
-        'control_points_dst': [[float(x), float(y)] for x, y in dst_inliers.tolist()],
-        'num_points': len(src_pts),
-        'inlier_count': inlier_count,
-        'inlier_ratio': float(inlier_count / len(src_pts)) if len(src_pts) > 0 else 0.0,
-        'median_error': float(median_error),
-        'robust_rmse': float(robust_rmse),
-        'mean_error': float(np.mean(inlier_errors)) if len(inlier_errors) > 0 else float(np.mean(reproj_errors[valid])),
-        'std_error': float(np.std(inlier_errors)) if len(inlier_errors) > 0 else float(np.std(reproj_errors[valid])),
-        'max_error': float(np.max(inlier_errors)) if len(inlier_errors) > 0 else float(np.max(reproj_errors[valid])),
-        'reproj_errors': [float(x) for x in reproj_errors.tolist()],
-        'inliers': [int(x) for x in inlier_mask.astype(int).tolist()]
-    }
-
-
 def choose_best_transform(transforms: List[Dict]) -> Dict:
     """Choose the best transformation based on robust statistics."""
-    valid_transforms = [t for t in transforms if t.get('matrix') is not None]
+    # Valid transforms include those with matrices OR control points (for spline)
+    valid_transforms = [
+        t for t in transforms 
+        if t.get('error') is None and (t.get('matrix') is not None or t.get('control_points_src') is not None or t.get('coefficients_x') is not None)
+    ]
     
     if not valid_transforms:
         return None
@@ -798,50 +707,6 @@ def apply_spline_transform_to_image(image: np.ndarray, transform_dict: Dict,
     
     map_x = new_x.astype(np.float32)
     map_y = new_y.astype(np.float32)
-    
-    if target_shape is not None:
-        map_x = cv2.resize(map_x, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
-        map_y = cv2.resize(map_y, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
-        out_h, out_w = target_shape
-    else:
-        min_x, max_x = map_x.min(), map_x.max()
-        min_y, max_y = map_y.min(), map_y.max()
-        out_w = int(np.ceil(max_x - min_x))
-        out_h = int(np.ceil(max_y - min_y))
-        map_x -= min_x
-        map_y -= min_y
-    
-    transformed = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-    return transformed
-
-
-def apply_rubber_sheeting_transform_to_image(image: np.ndarray, transform_dict: Dict,
-                                            target_shape: Optional[Tuple[int, int]] = None) -> np.ndarray:
-    """Apply rubber sheeting transformation to image."""
-    if not SCIPY_AVAILABLE:
-        raise ValueError("scipy not available for rubber sheeting")
-    
-    from scipy.interpolate import griddata
-    
-    h, w = image.shape[:2]
-    src_control = np.array(transform_dict['control_points_src'])
-    dst_control = np.array(transform_dict['control_points_dst'])
-    
-    # Build coordinate grid
-    y_coords, x_coords = np.mgrid[0:h, 0:w]
-    coords = np.column_stack([x_coords.ravel(), y_coords.ravel()])
-    
-    # Interpolate transformation
-    new_x = griddata(src_control, dst_control[:, 0], coords, method='linear', fill_value=np.nan)
-    new_y = griddata(src_control, dst_control[:, 1], coords, method='linear', fill_value=np.nan)
-    
-    # Handle NaN values
-    valid = ~(np.isnan(new_x) | np.isnan(new_y))
-    new_x[~valid] = coords[~valid, 0]  # Keep original x for invalid
-    new_y[~valid] = coords[~valid, 1]  # Keep original y for invalid
-    
-    map_x = new_x.reshape(h, w).astype(np.float32)
-    map_y = new_y.reshape(h, w).astype(np.float32)
     
     if target_shape is not None:
         map_x = cv2.resize(map_x, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
@@ -1049,19 +914,14 @@ def process_scale_level(test_dir: Path, current_scale: float, next_scale: float,
     poly3_result = compute_polynomial_transform(src_pts_clean, dst_pts_clean, degree=3, ransac_threshold=scaled_ransac_threshold)
     transforms.append(poly3_result)
     
-    # Spline and rubber sheeting: Skip at 0.5 scale due to computational issues
+    # Spline: Skip at 0.5 scale due to computational issues
     if next_scale < 0.5:
         # Spline (thin-plate)
         print("   Computing spline (thin-plate) transformation...")
         spline_result = compute_spline_transform(src_pts_clean, dst_pts_clean, scaled_ransac_threshold)
         transforms.append(spline_result)
-        
-        # Rubber sheeting
-        print("   Computing rubber sheeting transformation...")
-        rubber_result = compute_rubber_sheeting_transform(src_pts_clean, dst_pts_clean, scaled_ransac_threshold)
-        transforms.append(rubber_result)
     else:
-        print("   Skipping spline and rubber_sheeting at 0.5 scale (computational issues)")
+        print("   Skipping spline at 0.5 scale (computational issues)")
     
     # 4. Add meter conversions to all transforms and choose best
     print(f"\n4. Adding meter conversions and choosing best transformation...")
@@ -1234,7 +1094,7 @@ def process_scale_level(test_dir: Path, current_scale: float, next_scale: float,
                 transformed = apply_polynomial_transform_to_image(source, t, target_shape=None)
                 
             elif 'control_points_src' in t:
-                # Spline or rubber sheeting - scale control points
+                # Spline - scale control points
                 t_scaled = t.copy()
                 src_control = np.array(t['control_points_src'])
                 dst_control = np.array(t['control_points_dst'])
@@ -1245,8 +1105,6 @@ def process_scale_level(test_dir: Path, current_scale: float, next_scale: float,
                 
                 if transform_type == 'spline':
                     transformed = apply_spline_transform_to_image(source, t_scaled, target_shape=None)
-                elif transform_type == 'rubber_sheeting':
-                    transformed = apply_rubber_sheeting_transform_to_image(source, t_scaled, target_shape=None)
                 else:
                     print(f"     Warning: Unknown type, skipping")
                     continue
@@ -1300,10 +1158,10 @@ def process_scale_level(test_dir: Path, current_scale: float, next_scale: float,
             # All points are inliers (e.g., for shift)
             inlier_errors = reproj_errors_meters.tolist()
         else:
-            # For spline/rubber_sheeting: RANSAC inliers have near-zero error (fit perfectly)
+            # For spline: RANSAC inliers have near-zero error (fit perfectly)
             # So we use all points with meaningful reprojection errors as "inliers" for the histogram
             # For other transforms: use the actual inlier mask
-            if transform_type in ['spline', 'rubber_sheeting']:
+            if transform_type == 'spline':
                 # Use all points with non-zero errors (these are the "inliers" for evaluation)
                 # The RANSAC inliers have zero error because the spline fits them perfectly
                 inlier_errors = reproj_errors_meters[reproj_errors_meters > 1e-6].tolist()
