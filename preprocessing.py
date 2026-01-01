@@ -178,6 +178,32 @@ class ImagePreprocessor:
     
     def _calculate_resolution(self, crs, bounds, shape) -> float:
         """Calculate resolution in meters per pixel."""
+        # region agent log
+        import json
+        import time
+        log_path = Path("/Users/mauriciohessflores/Documents/Code/MyCode/.cursor/debug.log")
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H1",
+                "location": "preprocessing.py:_calculate_resolution",
+                "message": "resolution_calculation_start",
+                "data": {
+                    "crs_is_geographic": bool(crs and crs.is_geographic),
+                    "crs": str(crs) if crs else None,
+                    "bounds": {"left": float(bounds.left), "right": float(bounds.right), "top": float(bounds.top), "bottom": float(bounds.bottom)},
+                    "shape": {"width": int(shape[1]), "height": int(shape[0])}
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            with log_path.open("a") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
+        # endregion agent log
+        
         if crs and crs.is_geographic:
             center_lon = (bounds.left + bounds.right) / 2
             center_lat = (bounds.top + bounds.bottom) / 2
@@ -186,19 +212,95 @@ class ImagePreprocessor:
             res_x = dist_x / shape[1]
             _, _, dist_y = geod.inv(center_lon, bounds.bottom, center_lon, bounds.top)
             res_y = dist_y / shape[0]
-            return (res_x + res_y) / 2
+            result = (res_x + res_y) / 2
+            
+            # region agent log
+            try:
+                payload = {
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "preprocessing.py:_calculate_resolution",
+                    "message": "resolution_calculation_geographic",
+                    "data": {
+                        "center_lon": float(center_lon),
+                        "center_lat": float(center_lat),
+                        "dist_x_m": float(dist_x),
+                        "dist_y_m": float(dist_y),
+                        "res_x_m_per_pixel": float(res_x),
+                        "res_y_m_per_pixel": float(res_y),
+                        "result_m_per_pixel": float(result)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                with log_path.open("a") as f:
+                    f.write(json.dumps(payload) + "\n")
+            except Exception:
+                pass
+            # endregion agent log
+            
+            return result
         else:
             # Use transform to get resolution
             if crs == self.source_crs:
-                return abs(self.source_transform.a)
+                result = abs(self.source_transform.a)
             else:
-                return abs(self.target_transform.a)
+                result = abs(self.target_transform.a)
+            
+            # region agent log
+            try:
+                payload = {
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H1",
+                    "location": "preprocessing.py:_calculate_resolution",
+                    "message": "resolution_calculation_projected",
+                    "data": {
+                        "transform_a": float(self.source_transform.a) if crs == self.source_crs else float(self.target_transform.a),
+                        "result_m_per_pixel": float(result)
+                    },
+                    "timestamp": int(time.time() * 1000)
+                }
+                with log_path.open("a") as f:
+                    f.write(json.dumps(payload) + "\n")
+            except Exception:
+                pass
+            # endregion agent log
+            
+            return result
     
     def compute_overlap_region(self, scale_factor: float) -> Optional[Dict]:
         """
         Compute the geographic overlap region between source and target.
         Returns pixel coordinates for cropping both images at the given scale.
         """
+        # region agent log
+        import json
+        import time
+        log_path = Path("/Users/mauriciohessflores/Documents/Code/MyCode/.cursor/debug.log")
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H2",
+                "location": "preprocessing.py:compute_overlap_region",
+                "message": "overlap_calculation_start",
+                "data": {
+                    "scale_factor": float(scale_factor),
+                    "source_crs": str(self.source_crs) if self.source_crs else None,
+                    "target_crs": str(self.target_crs) if self.target_crs else None,
+                    "source_crs_is_geographic": bool(self.source_crs and self.source_crs.is_geographic),
+                    "target_crs_is_geographic": bool(self.target_crs and self.target_crs.is_geographic)
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            with log_path.open("a") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
+        # endregion agent log
+        
         # Get bounds in geographic coordinates (meters for UTM)
         src_bounds = self.source_bounds
         tgt_bounds = self.target_bounds
@@ -219,6 +321,46 @@ class ImagePreprocessor:
         
         logging.info(f"  Geographic overlap: {overlap_width_m:.1f}m × {overlap_height_m:.1f}m")
         
+        # region agent log
+        try:
+            payload = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H2",
+                "location": "preprocessing.py:compute_overlap_region",
+                "message": "overlap_bounds_computed",
+                "data": {
+                    "overlap_left": float(overlap_left),
+                    "overlap_right": float(overlap_right),
+                    "overlap_bottom": float(overlap_bottom),
+                    "overlap_top": float(overlap_top),
+                    "overlap_width": float(overlap_width_m),
+                    "overlap_height": float(overlap_height_m),
+                    "source_transform": {
+                        "a": float(self.source_transform.a),
+                        "b": float(self.source_transform.b),
+                        "c": float(self.source_transform.c),
+                        "d": float(self.source_transform.d),
+                        "e": float(self.source_transform.e),
+                        "f": float(self.source_transform.f)
+                    },
+                    "target_transform": {
+                        "a": float(self.target_transform.a),
+                        "b": float(self.target_transform.b),
+                        "c": float(self.target_transform.c),
+                        "d": float(self.target_transform.d),
+                        "e": float(self.target_transform.e),
+                        "f": float(self.target_transform.f)
+                    }
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            with log_path.open("a") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
+        # endregion agent log
+        
         # Convert overlap bounds to pixel coordinates
         src_transform_inv = ~self.source_transform
         tgt_transform_inv = ~self.target_transform
@@ -228,6 +370,32 @@ class ImagePreprocessor:
         
         tgt_col_left, tgt_row_top = tgt_transform_inv * (overlap_left, overlap_top)
         tgt_col_right, tgt_row_bottom = tgt_transform_inv * (overlap_right, overlap_bottom)
+        
+        # region agent log
+        try:
+            payload = {
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H2",
+                "location": "preprocessing.py:compute_overlap_region",
+                "message": "pixel_coords_computed",
+                "data": {
+                    "src_col_left": float(src_col_left),
+                    "src_row_top": float(src_row_top),
+                    "src_col_right": float(src_col_right),
+                    "src_row_bottom": float(src_row_bottom),
+                    "tgt_col_left": float(tgt_col_left),
+                    "tgt_row_top": float(tgt_row_top),
+                    "tgt_col_right": float(tgt_col_right),
+                    "tgt_row_bottom": float(tgt_row_bottom)
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            with log_path.open("a") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
+        # endregion agent log
         
         # Ensure valid pixel coordinates
         src_x1_raw = min(src_col_left, src_col_right)

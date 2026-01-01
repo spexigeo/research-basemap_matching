@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Main registration pipeline for orthomosaic alignment.
+Main registration pipeline for orthomosaic alignment (upsample variant).
 Hierarchical registration using resolution pyramid with cumulative transformations.
 
 Default scales: [0.125, 0.25, 0.5]
 Default matcher: LightGlue
-Default transforms: shift (0.125, 0.25), affine (0.5)
-Default output directory: outputs/
+Default transforms: shift (0.125, 0.25), homography (0.5)
+Default output directory: outputs_upsample/
 """
 
 import numpy as np
@@ -21,15 +21,15 @@ import time
 import logging
 import argparse
 
-from defaults import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER, DEFAULT_DEBUG_LEVEL, DEFAULT_OUTPUT_DIR
+from defaults_upsample import DEFAULT_SCALES, DEFAULT_ALGORITHMS, DEFAULT_MATCHER, DEFAULT_DEBUG_LEVEL, DEFAULT_OUTPUT_DIR
 from preprocessing import ImagePreprocessor
 from matching import match_lightglue, match_sift, match_orb, match_patch_ncc, create_mask, LIGHTGLUE_AVAILABLE, visualize_matches
 from transformations import (
     load_matches, remove_gross_outliers, compute_2d_shift, compute_similarity_transform,
     compute_affine_transform, compute_homography, compute_polynomial_transform,
-    compute_spline_transform, choose_best_transform,
+    compute_spline_transform, compute_rubber_sheeting_transform, choose_best_transform,
     apply_transform_to_image, apply_polynomial_transform_to_image,
-    apply_spline_transform_to_image
+    apply_spline_transform_to_image, apply_rubber_sheeting_transform_to_image
 )
 
 # Set up logging to both console and file
@@ -300,84 +300,22 @@ class OrthomosaicRegistration:
         
         # Step 2: Create downsampled orthomosaic at lowest scale as temp.png and scale{scale}_original.tif
         logging.info(f"\n{'='*80}")
-        logging.info(f"Step 2: Preparing orthomosaic at scale {lowest_scale:.3f}")
+        logging.info(f"Step 2: Creating downsampled orthomosaic at scale {lowest_scale:.3f}")
         logging.info(f"{'='*80}")
         
         temp_png_path = self.intermediate_dir / 'temp.png'
         original_tif_path = self.intermediate_dir / f'scale{lowest_scale:.3f}_original.tif'
         
-        # If scale is 1.000, use the original input image directly but process it to match expected format
-        if abs(lowest_scale - 1.0) < 1e-6:
-            logging.info(f"  Scale is 1.000, processing original input image (no downsampling)")
-            # Process the original image to match the format expected by the pipeline
-            # (uint8, 3 bands, JPEG compression, etc.)
-            try:
-                with rasterio.open(self.source_path) as src:
-                    orig_height = src.height
-                    orig_width = src.width
-                    orig_transform = src.transform
-                    orig_crs = src.crs
-                    orig_count = src.count
-                    
-                    # Read all bands (up to 3 for RGB)
-                    output_data = []
-                    for band_idx in range(1, min(orig_count + 1, 4)):
-                        band_data = src.read(band_idx)
-                        # Normalize to uint8 if needed
-                        if band_data.dtype != np.uint8:
-                            dmin, dmax = band_data.min(), band_data.max()
-                            if dmax > dmin:
-                                band_data = ((band_data - dmin) / (dmax - dmin) * 255).astype(np.uint8)
-                            else:
-                                band_data = np.zeros_like(band_data, dtype=np.uint8)
-                        output_data.append(band_data)
-                    
-                    # Ensure 3 bands for RGB
-                    if len(output_data) == 1:
-                        output_data = [output_data[0], output_data[0], output_data[0]]
-                    elif len(output_data) == 2:
-                        output_data.append(output_data[1])
-                    
-                    # Save in the expected format
-                    output_array = np.stack(output_data[:3], axis=0).astype(np.uint8)
-                    original_tif_path.parent.mkdir(parents=True, exist_ok=True)
-                    with rasterio.open(
-                        original_tif_path,
-                        'w',
-                        driver='GTiff',
-                        height=orig_height,
-                        width=orig_width,
-                        count=3,
-                        dtype=np.uint8,
-                        crs=orig_crs,
-                        transform=orig_transform,
-                        compress='JPEG',
-                        jpeg_quality=90,
-                        photometric='RGB',
-                        tiled=True,
-                        blockxsize=512,
-                        blockysize=512
-                    ) as dst:
-                        for band_idx in range(1, 4):
-                            dst.write(output_array[band_idx - 1], band_idx)
-                    
-                    logging.info(f"  Created: {original_tif_path.name} (from original input, processed to uint8 RGB)")
-            except Exception as e:
-                logging.error(f"  Failed to process original input image: {e}")
-                import traceback
-                traceback.print_exc()
-                return None
-        else:
-            # Create downsampled orthomosaic
-            downsampled_ortho = self._get_or_create_downsampled_orthomosaic(lowest_scale)
-            if downsampled_ortho is None:
-                logging.error("Failed to create downsampled orthomosaic")
-                return None
-            
-            # Copy to original_tif_path
-            import shutil
-            shutil.copy(downsampled_ortho, original_tif_path)
-            logging.info(f"  Created: {original_tif_path.name}")
+        # Create downsampled orthomosaic
+        downsampled_ortho = self._get_or_create_downsampled_orthomosaic(lowest_scale)
+        if downsampled_ortho is None:
+            logging.error("Failed to create downsampled orthomosaic")
+            return None
+        
+        # Copy to original_tif_path
+        import shutil
+        shutil.copy(downsampled_ortho, original_tif_path)
+        logging.info(f"  Created: {original_tif_path.name}")
         
         # Convert to PNG for temp.png
         if not tif_to_grayscale_png(original_tif_path, temp_png_path):
@@ -400,110 +338,56 @@ class OrthomosaicRegistration:
                 logging.error(f"Target overlap image not found: {target_overlap_path}")
                 return None
             
-            # Check if matches already exist for this scale
-            matches_json = self.matching_dir / f'matches_scale{scale:.3f}.json'
+            # Match temp.png with target_overlap_scale{scale}.png
+            logging.info(f"  Matching temp.png with target_overlap_scale{scale:.3f}.png...")
             
-            if matches_json.exists():
-                # Matches already exist - load them instead of recomputing
-                logging.info(f"  Matches already exist at scale {scale:.3f}, loading from {matches_json.name}...")
-                src_pts, dst_pts = load_matches(matches_json)
-                
-                # Load matches_result structure for visualization (if needed)
-                import json
-                with open(matches_json, 'r') as f:
-                    matches_data = json.load(f)
-                # Reconstruct matches_result for visualization
-                matches_result = {
-                    'method': matches_data.get('method', self.matcher),
-                    'matches': matches_data.get('matches', []),
-                    'scale': scale
-                }
-            else:
-                # Compute matches
-                logging.info(f"  Matching temp.png with target_overlap_scale{scale:.3f}.png...")
-                
-                # Read images using safe read function that handles large images
-                def _safe_read_gray_local(img_path: Path) -> Optional[np.ndarray]:
-                    """Read grayscale image; fall back to rasterio/PIL if OpenCV hits size limits."""
-                    # Check file size first - if very large, skip OpenCV entirely
-                    skip_opencv = False
-                    try:
-                        file_size_mb = img_path.stat().st_size / (1024 * 1024)
-                        # If file is > 500MB, likely too large for OpenCV, use rasterio/PIL directly
-                        if file_size_mb > 500:
-                            logging.debug(f"    Large image ({file_size_mb:.1f}MB), skipping OpenCV for {img_path.name}")
-                            skip_opencv = True
-                    except OSError:
-                        pass  # File size check failed, try OpenCV anyway
-                    
-                    # Try OpenCV first (fast for small images), but skip if file is too large
-                    if not skip_opencv:
-                        try:
-                            arr = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
-                            if arr is not None and arr.size > 0:
-                                return arr
-                        except (cv2.error, Exception) as e:
-                            logging.debug(f"    OpenCV read failed for {img_path.name}: {e}")
-                    
-                    # Fallback to rasterio (handles large images better)
-                    try:
-                        import warnings
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings('ignore', message='.*geotransform.*')
-                            warnings.filterwarnings('ignore', message='.*georeferenced.*')
-                            with rasterio.open(img_path) as src:
-                                data = src.read(1)
-                                dmin, dmax = data.min(), data.max()
-                                if dmax > dmin:
-                                    data = ((data - dmin) / (dmax - dmin) * 255).astype(np.uint8)
-                                else:
-                                    data = np.zeros_like(data, dtype=np.uint8)
-                                return data
-                    except Exception as e:
-                        # Final fallback: try PIL
-                        try:
-                            from PIL import Image
-                            img = Image.open(img_path).convert('L')
-                            return np.array(img, dtype=np.uint8)
-                        except Exception as e2:
-                            logging.error(f"    All read methods failed for {img_path.name}: {e}, {e2}")
-                            return None
-                
-                source_img = _safe_read_gray_local(temp_png_path)
-                target_img = _safe_read_gray_local(target_overlap_path)
-                
-                if source_img is None or target_img is None:
-                    logging.error(f"Failed to read images for matching at scale {scale:.3f}")
-                    return None
-                
-                source_mask = create_mask(source_img)
-                target_mask = create_mask(target_img)
-                
-                # Compute matches
-                matches_result = self._compute_matches(source_img, target_img, source_mask, target_mask, scale)
-                if not matches_result or 'matches' not in matches_result or len(matches_result['matches']) == 0:
-                    logging.error(f"No matches found at scale {scale:.3f}")
-                    return None
-                
-                # Save matches JSON
-                self._save_matches_json(matches_result, matches_json, scale,
-                                       source_image='temp.png',
-                                       target_image=target_overlap_path.name)
-                logging.info(f"  Created: {matches_json.name}")
-                
-                # Create visualizations (this also creates lightglue_keypoints_scale{scale}.png)
-                matches_viz_path = self.matching_dir / f'matches_scale{scale:.3f}.png'
-                matches_result['scale'] = scale
-                visualize_matches(
-                    source_img, target_img, matches_result, matches_viz_path,
-                    source_name='temp.png', target_name=target_overlap_path.name,
-                    skip_json=True
-                )
-                logging.info(f"  Created: {matches_viz_path.name}")
-                logging.info(f"  Created: lightglue_keypoints_scale{scale:.3f}.png")
-                
-                # Load matches for transformation
-                src_pts, dst_pts = load_matches(matches_json)
+            # Read images
+            source_img = cv2.imread(str(temp_png_path), cv2.IMREAD_GRAYSCALE)
+            if source_img is None:
+                # Fallback to PIL if OpenCV fails
+                from PIL import Image
+                img = Image.open(temp_png_path).convert('L')
+                source_img = np.array(img, dtype=np.uint8)
+            
+            target_img = cv2.imread(str(target_overlap_path), cv2.IMREAD_GRAYSCALE)
+            if target_img is None:
+                from PIL import Image
+                img = Image.open(target_overlap_path).convert('L')
+                target_img = np.array(img, dtype=np.uint8)
+            
+            if source_img is None or target_img is None:
+                logging.error(f"Failed to read images for matching at scale {scale:.3f}")
+                return None
+            
+            source_mask = create_mask(source_img)
+            target_mask = create_mask(target_img)
+            
+            # Compute matches
+            matches_result = self._compute_matches(source_img, target_img, source_mask, target_mask, scale)
+            if not matches_result or 'matches' not in matches_result or len(matches_result['matches']) == 0:
+                logging.error(f"No matches found at scale {scale:.3f}")
+                return None
+            
+            # Save matches JSON
+            matches_json = self.matching_dir / f'matches_scale{scale:.3f}.json'
+            self._save_matches_json(matches_result, matches_json, scale,
+                                   source_image='temp.png',
+                                   target_image=target_overlap_path.name)
+            logging.info(f"  Created: {matches_json.name}")
+            
+            # Create visualizations (this also creates lightglue_keypoints_scale{scale}.png)
+            matches_viz_path = self.matching_dir / f'matches_scale{scale:.3f}.png'
+            matches_result['scale'] = scale
+            visualize_matches(
+                source_img, target_img, matches_result, matches_viz_path,
+                source_name='temp.png', target_name=target_overlap_path.name,
+                skip_json=True
+            )
+            logging.info(f"  Created: {matches_viz_path.name}")
+            logging.info(f"  Created: lightglue_keypoints_scale{scale:.3f}.png")
+            
+            # Load matches for transformation
+            src_pts, dst_pts = load_matches(matches_json)
             src_pts_clean, dst_pts_clean, _ = remove_gross_outliers(src_pts, dst_pts)
             
             # Compute shift transformation
@@ -561,99 +445,81 @@ class OrthomosaicRegistration:
             if not tif_to_grayscale_png(after_transform_tif, temp_png_path):
                 return None
             
-            # If not last scale, prepare for next scale
+            # If not last scale, upsample the TIF to next scale
             if i < len(sorted_scales) - 1:
                 next_scale = sorted_scales[i + 1]
+                scale_factor = next_scale / scale
                 
-                # Check if next scale is the same as current scale
-                if abs(next_scale - scale) < 1e-6:
-                    # Same scale - reuse the existing transformed image
-                    logging.info(f"  Next scale {next_scale:.3f} is same as current scale {scale:.3f}, reusing existing transformed image")
-                    next_original_tif = self.intermediate_dir / f'scale{next_scale:.3f}_original.tif'
+                logging.info(f"  Upsampling from scale {scale:.3f} to {next_scale:.3f} (factor: {scale_factor:.3f})...")
+                
+                # Upsample the TIF file
+                next_original_tif = self.intermediate_dir / f'scale{next_scale:.3f}_original.tif'
+                
+                with rasterio.open(after_transform_tif) as src:
+                    new_height = int(src.height * scale_factor)
+                    new_width = int(src.width * scale_factor)
                     
-                    # Copy the transformed image to be the "original" for the next iteration
-                    import shutil
-                    shutil.copy(after_transform_tif, next_original_tif)
-                    logging.info(f"  Reused: {next_original_tif.name} (from {after_transform_tif.name})")
-                    current_tif_path = next_original_tif
+                    # Calculate new transform
+                    new_transform = rasterio.Affine(
+                        src.transform.a / scale_factor,
+                        src.transform.b,
+                        src.transform.c,
+                        src.transform.d,
+                        src.transform.e / scale_factor,
+                        src.transform.f
+                    )
                     
-                    # Update temp.png from the reused TIF
-                    if not tif_to_grayscale_png(next_original_tif, temp_png_path):
-                        return None
-                else:
-                    # Different scale - upsample the TIF to next scale
-                    scale_factor = next_scale / scale
-                    
-                    logging.info(f"  Upsampling from scale {scale:.3f} to {next_scale:.3f} (factor: {scale_factor:.3f})...")
-                    
-                    # Upsample the TIF file
-                    next_original_tif = self.intermediate_dir / f'scale{next_scale:.3f}_original.tif'
-                    
-                    with rasterio.open(after_transform_tif) as src:
-                        new_height = int(src.height * scale_factor)
-                        new_width = int(src.width * scale_factor)
-                        
-                        # Calculate new transform
-                        new_transform = rasterio.Affine(
-                            src.transform.a / scale_factor,
-                            src.transform.b,
-                            src.transform.c,
-                            src.transform.d,
-                            src.transform.e / scale_factor,
-                            src.transform.f
+                    # Read and upsample each band
+                    output_data = []
+                    for band_idx in range(1, min(src.count + 1, 4)):
+                        band_data = src.read(
+                            band_idx,
+                            out_shape=(new_height, new_width),
+                            resampling=Resampling.bilinear
                         )
-                        
-                        # Read and upsample each band
-                        output_data = []
-                        for band_idx in range(1, min(src.count + 1, 4)):
-                            band_data = src.read(
-                                band_idx,
-                                out_shape=(new_height, new_width),
-                                resampling=Resampling.bilinear
-                            )
-                            # Normalize to uint8 if needed
-                            if band_data.dtype != np.uint8:
-                                dmin, dmax = band_data.min(), band_data.max()
-                                if dmax > dmin:
-                                    band_data = ((band_data - dmin) / (dmax - dmin) * 255).astype(np.uint8)
-                                else:
-                                    band_data = np.zeros_like(band_data, dtype=np.uint8)
-                            output_data.append(band_data)
-                        
-                        # Ensure 3 bands
-                        if len(output_data) == 1:
-                            output_data = [output_data[0], output_data[0], output_data[0]]
-                        elif len(output_data) == 2:
-                            output_data.append(output_data[1])
-                        
-                        # Save upsampled TIF
-                        output_array = np.stack(output_data[:3], axis=0).astype(np.uint8)
-                        with rasterio.open(
-                            next_original_tif,
-                            'w',
-                            driver='GTiff',
-                            height=new_height,
-                            width=new_width,
-                            count=3,
-                            dtype=np.uint8,
-                            crs=src.crs,
-                            transform=new_transform,
-                            compress='JPEG',
-                            jpeg_quality=90,
-                            photometric='RGB',
-                            tiled=True,
-                            blockxsize=512,
-                            blockysize=512
-                        ) as dst:
-                            for band_idx in range(1, 4):
-                                dst.write(output_array[band_idx - 1], band_idx)
+                        # Normalize to uint8 if needed
+                        if band_data.dtype != np.uint8:
+                            dmin, dmax = band_data.min(), band_data.max()
+                            if dmax > dmin:
+                                band_data = ((band_data - dmin) / (dmax - dmin) * 255).astype(np.uint8)
+                            else:
+                                band_data = np.zeros_like(band_data, dtype=np.uint8)
+                        output_data.append(band_data)
                     
-                    logging.info(f"  Created: {next_original_tif.name}")
-                    current_tif_path = next_original_tif
+                    # Ensure 3 bands
+                    if len(output_data) == 1:
+                        output_data = [output_data[0], output_data[0], output_data[0]]
+                    elif len(output_data) == 2:
+                        output_data.append(output_data[1])
                     
-                    # Update temp.png from the upsampled TIF
-                    if not tif_to_grayscale_png(next_original_tif, temp_png_path):
-                        return None
+                    # Save upsampled TIF
+                    output_array = np.stack(output_data[:3], axis=0).astype(np.uint8)
+                    with rasterio.open(
+                        next_original_tif,
+                        'w',
+                        driver='GTiff',
+                        height=new_height,
+                        width=new_width,
+                        count=3,
+                        dtype=np.uint8,
+                        crs=src.crs,
+                        transform=new_transform,
+                        compress='JPEG',
+                        jpeg_quality=90,
+                        photometric='RGB',
+                        tiled=True,
+                        blockxsize=512,
+                        blockysize=512
+                    ) as dst:
+                        for band_idx in range(1, 4):
+                            dst.write(output_array[band_idx - 1], band_idx)
+                
+                logging.info(f"  Created: {next_original_tif.name}")
+                current_tif_path = next_original_tif
+                
+                # Update temp.png from the upsampled TIF
+                if not tif_to_grayscale_png(next_original_tif, temp_png_path):
+                    return None
         
         # Step 4: Skip final transformation application
         # All transformations, intermediate images, and visualizations have been computed.
@@ -1079,25 +945,8 @@ class OrthomosaicRegistration:
                         source_mask: np.ndarray, target_mask: np.ndarray,
                         scale: float) -> Optional[Dict]:
         """Compute matches using specified matcher."""
-        # Use source pixel resolution for distance calculation
-        # When matching, the target is upsampled to match the source resolution,
-        # so pixel coordinates are in the source's coordinate space
+        # Use actual source pixel resolution, scaled by the current scale factor
         pixel_resolution = self.source_pixel_resolution / scale  # meters per pixel at this scale
-        
-        # region agent log
-        _dbg_log(
-            hypothesis_id="H4",
-            location="register_orthomosaic.py:_compute_matches",
-            message="pixel_resolution_used_for_matching",
-            data={
-                "matcher": self.matcher,
-                "scale": float(scale),
-                "source_pixel_resolution_full": float(self.source_pixel_resolution),
-                "pixel_resolution_at_scale": float(pixel_resolution),
-                "source_crs": str(self.source_crs) if self.source_crs else None
-            }
-        )
-        # endregion agent log
         
         if self.matcher == 'lightglue':
             if not LIGHTGLUE_AVAILABLE:
@@ -1113,9 +962,6 @@ class OrthomosaicRegistration:
         elif self.matcher == 'orb':
             return match_orb(source, target, source_mask, target_mask)
         elif self.matcher == 'patch_ncc':
-            # NOTE: match_patch_ncc has a hard-coded 0.02 m/pixel assumption
-            # This is a bug but doesn't affect lightglue (default matcher)
-            # TODO: Fix match_patch_ncc to accept pixel_resolution parameter
             return match_patch_ncc(source, target, source_mask, target_mask, scale=scale)
         else:
             raise ValueError(f"Unknown matcher: {self.matcher}")
@@ -1123,9 +969,7 @@ class OrthomosaicRegistration:
     def _compute_transformation(self, src_pts: np.ndarray, dst_pts: np.ndarray,
                                transform_type: str, scale: float) -> Dict:
         """Compute transformation of specified type and convert to meters."""
-        # Use source pixel resolution for distance calculation
-        # When matching, the target is upsampled to match the source resolution,
-        # so pixel coordinates are in the source's coordinate space
+        # Use actual source pixel resolution, scaled by the current scale factor
         pixel_resolution = self.source_pixel_resolution / scale
         ransac_threshold = 5.0 * (scale / 0.15)  # Scale threshold with resolution
         
@@ -1144,6 +988,8 @@ class OrthomosaicRegistration:
             result = compute_polynomial_transform(src_pts, dst_pts, degree=3, ransac_threshold=ransac_threshold)
         elif transform_type == 'spline':
             result = compute_spline_transform(src_pts, dst_pts, ransac_threshold)
+        elif transform_type == 'rubber_sheeting':
+            result = compute_rubber_sheeting_transform(src_pts, dst_pts, ransac_threshold)
         else:
             raise ValueError(f"Unknown transform type: {transform_type}")
         
@@ -1728,54 +1574,15 @@ class OrthomosaicRegistration:
                             
                         written_tiled = True
                     
-                elif transform_type == 'spline':
-                    # Spline transformation using control points
-                    if 'control_points_src' not in transform_result or 'control_points_dst' not in transform_result:
-                        logging.error(f"    Missing control points for {transform_type} transformation")
-                        return None
-                    
-                    src_control = np.array(transform_result['control_points_src'])
-                    dst_control = np.array(transform_result['control_points_dst'])
-                    
-                    # Scale control points to match the current image scale
-                    # Control points are in pixel coordinates at the scale where they were computed
-                    # We need to scale them to the target scale
-                    src_control_scaled = src_control * scale_factor
-                    dst_control_scaled = dst_control * scale_factor
-                    
-                    # Create transform dict for the apply functions
-                    transform_dict = {
-                        'control_points_src': src_control_scaled.tolist(),
-                        'control_points_dst': dst_control_scaled.tolist()
-                    }
-                    
-                    # For control-point based transforms, we need to process the full image
-                    # because the transformation is computed on the entire coordinate grid
-                    # Read full image
-                    data = src.read()  # Shape: (num_bands, height, width)
-                    
-                    # Apply transformation to each band
-                    output_bands = []
-                    for band_idx in range(num_bands):
-                        band_image = data[band_idx]  # Shape: (height, width)
-                        
-                        transformed_band = apply_spline_transform_to_image(
-                            band_image, transform_dict, target_shape=(height, width)
-                        )
-                        
-                        output_bands.append(transformed_band)
-                    
-                    output_data = np.stack(output_bands, axis=0)
-                    
                 else:
                     logging.warning(f"    Unsupported transform type for orthomosaic: {transform_type}")
                     return None
                 
                 # Calculate updated transform based on transformation applied
-                # For shift and affine transformations, adjust the origin by the translation amount
+                # For shift transformations, adjust the origin by the shift amount
                 updated_transform = orig_transform
-                if transform_type in ['shift', 'affine'] and 'matrix_meters' in transform_result and transform_result['matrix_meters'] is not None:
-                    # Shift or affine transformation: adjust transform origin based on translation
+                if transform_type == 'shift' and 'matrix_meters' in transform_result and transform_result['matrix_meters'] is not None:
+                    # Shift transformation: adjust transform origin
                     M_meters = np.array(transform_result['matrix_meters'])
                     if M_meters.shape == (2, 3):
                         shift_x_meters = M_meters[0, 2]
@@ -1799,7 +1606,7 @@ class OrthomosaicRegistration:
                                 orig_transform[0], orig_transform[1], orig_transform[2] + lon_shift_deg,
                                 orig_transform[3], orig_transform[4], orig_transform[5] + lat_shift_deg
                             )
-                            logging.debug(f"    Updated transform origin ({transform_type}): shift=({shift_x_meters:.3f}m, {shift_y_meters:.3f}m) = ({lon_shift_deg:.9f}°, {lat_shift_deg:.9f}°)")
+                            logging.debug(f"    Updated transform origin: shift=({shift_x_meters:.3f}m, {shift_y_meters:.3f}m) = ({lon_shift_deg:.9f}°, {lat_shift_deg:.9f}°)")
                         else:
                             # For other CRS, use pixel resolution to convert
                             # Use actual source pixel resolution at target scale
@@ -1813,7 +1620,6 @@ class OrthomosaicRegistration:
                                     orig_transform[0], orig_transform[1], orig_transform[2] + shift_x_crs,
                                     orig_transform[3], orig_transform[4], orig_transform[5] + shift_y_crs
                                 )
-                                logging.debug(f"    Updated transform origin ({transform_type}): shift=({shift_x_meters:.3f}m, {shift_y_meters:.3f}m) = ({shift_x_crs:.6f}, {shift_y_crs:.6f}) CRS units")
                 
                 # Save transformed orthomosaic
                 if written_tiled:
@@ -1821,7 +1627,7 @@ class OrthomosaicRegistration:
                     # Note: rasterio doesn't support updating transform after write, so we need to rewrite
                     # For now, we'll update it by reopening and copying with new transform
                     if updated_transform != orig_transform:
-                        logging.info(f"    Updating geotransform to account for {transform_type} transformation")
+                        logging.info(f"    Updating geotransform to account for {transform_type} shift")
                         # Read the file we just wrote
                         temp_path = output_path.with_suffix('.tmp.tif')
                         import shutil
@@ -1917,28 +1723,7 @@ class OrthomosaicRegistration:
         matches = matches_result.get('matches', [])
         scale_factor = matches_result.get('scale_factor', 1.0)
         # Use actual source pixel resolution, scaled by the current scale factor
-        # When matching, the target is upsampled to match the source resolution,
-        # so pixel coordinates are in the source's coordinate space
-        # Therefore, we should use source resolution for distance calculation
         pixel_resolution = self.source_pixel_resolution / scale
-        
-        # region agent log
-        _dbg_log(
-            hypothesis_id="H3",
-            location="register_orthomosaic.py:_save_matches_json",
-            message="pixel_resolution_for_distance",
-            data={
-                "scale": float(scale),
-                "source_pixel_resolution_full": float(self.source_pixel_resolution),
-                "source_pixel_resolution_at_scale": float(pixel_resolution),
-                "target_pixel_resolution_full": float(self.target_pixel_resolution),
-                "target_pixel_resolution_at_scale": float(self.target_pixel_resolution / scale),
-                "pixel_resolution_used": float(pixel_resolution),
-                "source_crs": str(self.source_crs) if self.source_crs else None,
-                "target_crs": str(self.preprocessor.target_crs) if self.preprocessor.target_crs else None
-            }
-        )
-        # endregion agent log
         
         # Collect all distances for summary statistics
         distances_pixels = []
@@ -1978,26 +1763,6 @@ class OrthomosaicRegistration:
                     
                     pixel_distance = np.sqrt((src_x - tgt_x_upsampled)**2 + (src_y - tgt_y_upsampled)**2)
                     distance_meters = pixel_distance * pixel_resolution
-                    
-                    # region agent log
-                    if len(distances_pixels) < 10:  # Log first 10 matches
-                        _dbg_log(
-                            hypothesis_id="H3",
-                            location="register_orthomosaic.py:_save_matches_json",
-                            message="match_distance_calculation",
-                            data={
-                                "match_idx": len(distances_pixels),
-                                "src_x": float(src_x),
-                                "src_y": float(src_y),
-                                "tgt_x_upsampled": float(tgt_x_upsampled),
-                                "tgt_y_upsampled": float(tgt_y_upsampled),
-                                "pixel_distance": float(pixel_distance),
-                                "pixel_resolution": float(pixel_resolution),
-                                "distance_meters": float(distance_meters),
-                                "scale": float(scale)
-                            }
-                        )
-                    # endregion agent log
                     
                     distances_pixels.append(pixel_distance)
                     distances_meters.append(distance_meters)
@@ -2121,9 +1886,7 @@ class OrthomosaicRegistration:
     def _save_transform_json(self, transform_result: Dict, output_path: Path, scale: float):
         """Save transformation to JSON file."""
         # Add pixel and meter conversions
-        # Use source pixel resolution for distance calculation
-        # When matching, the target is upsampled to match the source resolution,
-        # so pixel coordinates are in the source's coordinate space
+        # Use actual source pixel resolution, scaled by the current scale factor
         pixel_resolution = self.source_pixel_resolution / scale
         
         transform_data = {
@@ -2181,25 +1944,17 @@ class OrthomosaicRegistration:
         if len(matches_list) == 0:
             return
         
-        # Use source pixel resolution for distance calculation
-        # When matching, the target is upsampled to match the source resolution,
-        # so pixel coordinates are in the source's coordinate space
+        # Use actual source pixel resolution, scaled by the current scale factor
         pixel_resolution = self.source_pixel_resolution / scale
         
-        # Distances for all matches from matches JSON
-        # Always recalculate from pixel values using source resolution
-        # (ignoring cached meter values which may have been calculated with old resolution)
-        # When matching, the target is upsampled to match the source, so pixel coordinates
-        # are in the source's coordinate space and we should use source resolution
+        # Distances for all matches from matches JSON (as-is, no filtering)
         distances_all_m = []
         for m in matches_list:
             dist = m.get('distance', {})
-            if 'pixels' in dist:
-                # Recalculate from pixels using the new average resolution
-                distances_all_m.append(float(dist['pixels']) * pixel_resolution)
-            elif 'meters' in dist:
-                # Fallback: use cached meters if pixels not available (shouldn't happen)
+            if 'meters' in dist:
                 distances_all_m.append(float(dist['meters']))
+            elif 'pixels' in dist:
+                distances_all_m.append(float(dist['pixels']) * pixel_resolution)
         if len(distances_all_m) == 0:
             return
         distances_all_m = np.array(distances_all_m, dtype=float)
@@ -2259,12 +2014,7 @@ class OrthomosaicRegistration:
                 "num_all": len(distances_all_m),
                 "num_inliers": int(inlier_mask.sum()),
                 "median_all_m": float(np.median(distances_all_m)),
-                "median_inliers_m": float(np.median(inlier_errors_m)),
-                "mean_all_m": float(np.mean(distances_all_m)),
-                "mean_inliers_m": float(np.mean(inlier_errors_m)),
-                "pixel_resolution_used": float(pixel_resolution),
-                "percentile_90_all_m": float(np.percentile(distances_all_m, 90)),
-                "percentile_95_all_m": float(np.percentile(distances_all_m, 95))
+                "median_inliers_m": float(np.median(inlier_errors_m))
             }
         )
         # endregion agent log
@@ -2430,7 +2180,7 @@ def main():
     parser.add_argument('--gcp-analysis', type=str,
                        help='Path to GCP file (CSV or KMZ) for GCP analysis. Extracts 300x300 pixel patches from registered orthomosaic centered at each GCP location.')
     parser.add_argument('--gcp-evaluation', type=str,
-                       help='Path to GCP file (CSV or KMZ) for GCP evaluation. Extracts patches from registered orthomosaic at GCP locations using gcp_analysis.py.')
+                       help='Path to GCP file (CSV or KMZ) for GCP evaluation. Evaluates registration quality at the second-to-last scale using evaluate_gcps.py.')
     
     args = parser.parse_args()
     

@@ -104,16 +104,40 @@ def calculate_zoom_level(bbox: Tuple[float, float, float, float],
     min_lat, min_lon, max_lat, max_lon = bbox
     
     if target_resolution:
-        # Calculate zoom based on target resolution
+        # Calculate zoom based on target resolution using the same formula as the notebook
         center_lat = (min_lat + max_lat) / 2
-        meters_per_pixel_at_equator = 156543.03392
-        meters_per_pixel = meters_per_pixel_at_equator * math.cos(math.radians(center_lat))
         
-        for zoom in range(1, 20):
-            tile_size_meters = meters_per_pixel * 256 / (2 ** zoom)
-            if tile_size_meters <= target_resolution:
-                return zoom
-        return 18
+        # Earth's circumference at equator in meters
+        earth_circumference = 40075017.0  # meters
+        
+        # Find the zoom level that gives resolution closest to (but not too far above) target_resolution
+        # Iterate from high zoom (19) down to low zoom (12) to find best match
+        best_zoom = None
+        best_diff = float('inf')
+        
+        for zoom in range(19, 11, -1):
+            # Resolution at equator for given zoom level
+            resolution_equator = earth_circumference / (256 * (2 ** zoom))
+            # Adjust for latitude (pixels get smaller as you move away from equator)
+            resolution = resolution_equator * math.cos(math.radians(center_lat))
+            
+            # Prefer resolutions <= target, but if none found, use closest
+            if resolution <= target_resolution:
+                # This is ideal - use it
+                best_zoom = zoom
+                break
+            else:
+                # Resolution is above target, but might be closest
+                diff = resolution - target_resolution
+                if diff < best_diff:
+                    best_diff = diff
+                    best_zoom = zoom
+        
+        if best_zoom is None:
+            # Fallback to zoom 18 if no suitable zoom found
+            best_zoom = 18
+        
+        return best_zoom
     
     # Calculate based on bounding box size
     lat_range = max_lat - min_lat
