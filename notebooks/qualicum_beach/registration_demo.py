@@ -1,5 +1,5 @@
 # ---
-# marimo-version: 0.4.0
+# marimo-version: 0.4.11
 # ---
 """
 # Orthomosaic Registration Pipeline Demo (Marimo)
@@ -16,7 +16,7 @@ The algorithm:
 
 import marimo
 
-__generated_with = "0.4.0"
+__generated_with = "0.4.11"
 app = marimo.App(width="medium")
 
 
@@ -37,14 +37,33 @@ def __():
 
 @app.cell
 def __(Path, sys):
-    # Add parent directory to path to import modules
-    notebook_dir = Path.cwd()
-    repo_root = notebook_dir.parent
+    # Add project root directory to path to import modules
+    # Find the directory containing defaults.py by searching up from current directory
+    current = Path.cwd()
+    repo_root = None
+    
+    # Search up the directory tree for defaults.py
+    while current != current.parent:
+        if (current / 'defaults.py').exists():
+            repo_root = current
+            break
+        current = current.parent
+    
+    # If not found, try going up from notebooks/qualicum_beach/ (2 levels)
+    if repo_root is None:
+        notebook_dir = Path.cwd()
+        if 'notebooks' in str(notebook_dir):
+            repo_root = notebook_dir.parent.parent
+        else:
+            repo_root = notebook_dir
+    
     sys.path.insert(0, str(repo_root))
     
-    print(f"Working directory: {notebook_dir}")
+    print(f"Current directory: {Path.cwd()}")
     print(f"Repository root: {repo_root}")
-    return notebook_dir, repo_root
+    print(f"defaults.py exists: {(repo_root / 'defaults.py').exists()}")
+    print(f"Python path includes: {[p for p in sys.path if 'research-basemap_matching' in p]}")
+    return repo_root,
 
 
 @app.cell
